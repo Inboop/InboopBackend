@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: inboop-backend
+    ports:
+      - "8080:8080"
+    environment:
+      # Spring Profile
+      SPRING_PROFILES_ACTIVE: aws
+
+      # AWS Configuration (for Secrets Manager)
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      AWS_SECRET_NAME: ${AWS_SECRET_NAME:-rds!db-15d58b7f-937d-4e4b-b988-3b474cf662c6}
+
+      # AWS Credentials (on EC2, use IAM Role instead)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+
+      # Database URL (credentials fetched from Secrets Manager)
+      DB_URL: jdbc:postgresql://${DB_HOST}:5432/${DB_NAME:-inboop}
+      DDL_AUTO: ${DDL_AUTO:-update}
+
+      # OAuth (optional - set in .env)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8080}
+
+      # CORS
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+
+      # Instagram
+      INSTAGRAM_WEBHOOK_VERIFY_TOKEN: ${INSTAGRAM_WEBHOOK_VERIFY_TOKEN:-inboop_verify_token}
+    volumes:
+      # Mount AWS credentials for local development (remove for EC2 with IAM role)
+      - ~/.aws:/home/inboop/.aws:ro
+    restart: unless-stopped

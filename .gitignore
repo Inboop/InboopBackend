@@ -40,3 +40,6 @@ data/
 
 # Claude Code documentation (local only)
 CLAUDE.md
+
+# Docker
+.docker/

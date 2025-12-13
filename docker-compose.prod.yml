@@ -1,0 +1,39 @@
+version: '3.8'
+
+# Production docker-compose for EC2 deployment
+# Uses IAM Role for AWS credentials (no need to mount ~/.aws)
+
+services:
+  app:
+    build: .
+    container_name: inboop-backend
+    ports:
+      - "8080:8080"
+    environment:
+      # Spring Profile
+      SPRING_PROFILES_ACTIVE: aws
+
+      # AWS Configuration (for Secrets Manager)
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      AWS_SECRET_NAME: ${AWS_SECRET_NAME}
+
+      # Database URL (credentials fetched from Secrets Manager)
+      DB_URL: jdbc:postgresql://${DB_HOST}:5432/${DB_NAME:-inboop}
+      DDL_AUTO: ${DDL_AUTO:-update}
+
+      # OAuth (set in .env)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8080}
+
+      # CORS
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+
+      # Instagram
+      INSTAGRAM_WEBHOOK_VERIFY_TOKEN: ${INSTAGRAM_WEBHOOK_VERIFY_TOKEN:-inboop_verify_token}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

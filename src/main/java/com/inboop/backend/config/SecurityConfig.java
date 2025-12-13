@@ -39,6 +39,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/home", "/register", "/register-submit").permitAll()
+                        .requestMatchers("/actuator/**").permitAll() // Health checks
                         .requestMatchers("/api/v1/webhooks/**").permitAll() // Instagram webhooks
                         .requestMatchers("/api/v1/auth/me").authenticated()
                         .requestMatchers("/api/v1/**").authenticated()
