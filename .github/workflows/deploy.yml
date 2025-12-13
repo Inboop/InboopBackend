@@ -1,18 +1,16 @@
-name: Build and Deploy to EC2
+name: CI/CD
 
 on:
   push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+    branches: ['**']
 
 env:
   AWS_REGION: us-east-2
   ECR_REPOSITORY: inboop-backend
 
 jobs:
-  test:
-    name: Run Tests
+  build:
+    name: Build and Test
     runs-on: ubuntu-latest
 
     steps:
@@ -26,14 +24,14 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Run tests
-        run: ./mvnw test -B
+      - name: Build and run tests
+        run: ./mvnw clean verify -B
 
-  build-and-deploy:
-    name: Build and Deploy
-    needs: test
+  deploy:
+    name: Deploy to EC2
+    needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/master'
 
     steps:
       - name: Checkout code
@@ -76,22 +74,20 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
             cd /opt/inboop
 
             # Login to ECR
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+            aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
 
             # Pull latest image
-            docker pull ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            docker pull ${{ steps.login-ecr.outputs.registry }}/inboop-backend:latest
 
             # Stop existing container
-            docker-compose down || true
-
-            # Update docker-compose to use ECR image
-            export ECR_IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            docker-compose -f docker-compose.prod.yml down || true
 
             # Start with new image
-            docker-compose up -d
+            docker-compose -f docker-compose.prod.yml up -d
 
             # Health check
             sleep 30
