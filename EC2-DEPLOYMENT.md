@@ -1,4 +1,4 @@
-Yes# EC2 Deployment Guide for Inboop Backend
+# EC2 Deployment Guide for Inboop Backend
 
 This guide covers deploying the Inboop Backend to AWS EC2 with GitHub Actions CI/CD.
 
