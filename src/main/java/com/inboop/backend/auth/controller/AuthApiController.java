@@ -37,7 +37,7 @@ public class AuthApiController {
             AuthResponse response = authService.login(request);
             return ResponseEntity.ok(ApiResponse.success(response));
         } catch (BadCredentialsException e) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid username or password"));
+            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid email or password"));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
@@ -64,12 +64,12 @@ public class AuthApiController {
             return ResponseEntity.status(401).body(ApiResponse.error("Not authenticated"));
         }
 
-        String username = auth.getName();
-        var user = authService.findByUsername(username);
+        String email = auth.getName();
+        var user = authService.findByEmail(email);
 
         AuthResponse.UserDto userDto = new AuthResponse.UserDto(
                 user.getId(),
-                user.getUsername(),
+                user.getName(),
                 user.getEmail(),
                 user.getRole()
         );

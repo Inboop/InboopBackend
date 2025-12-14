@@ -60,15 +60,15 @@ public class AuthResponse {
 
     public static class UserDto {
         private Long id;
-        private String username;
+        private String name;
         private String email;
         private String role;
 
         public UserDto() {}
 
-        public UserDto(Long id, String username, String email, String role) {
+        public UserDto(Long id, String name, String email, String role) {
             this.id = id;
-            this.username = username;
+            this.name = name;
             this.email = email;
             this.role = role;
         }
@@ -81,12 +81,12 @@ public class AuthResponse {
             this.id = id;
         }
 
-        public String getUsername() {
-            return username;
+        public String getName() {
+            return name;
         }
 
-        public void setUsername(String username) {
-            this.username = username;
+        public void setName(String name) {
+            this.name = name;
         }
 
         public String getEmail() {
