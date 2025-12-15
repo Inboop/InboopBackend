@@ -56,6 +56,13 @@ services:
       # Instagram
       INSTAGRAM_WEBHOOK_VERIFY_TOKEN: ${INSTAGRAM_WEBHOOK_VERIFY_TOKEN:-inboop_verify_token}
 
+      # Facebook/Instagram OAuth
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+
+      # Meta App Secret (for data deletion callbacks)
+      META_APP_SECRET: ${META_APP_SECRET:-}
+
       # Disable H2 console in production
       H2_CONSOLE_ENABLED: "false"
     healthcheck:
