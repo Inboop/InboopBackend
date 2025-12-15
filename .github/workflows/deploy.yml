@@ -84,6 +84,11 @@ jobs:
             echo "=== Starting deployment ==="
             echo "Image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
+            # Pull latest deployment files from git
+            echo "=== Pulling latest deployment files ==="
+            git fetch origin master
+            git checkout origin/master -- docker-compose.prod.yml src/main/resources/db/migration/
+
             # Login to ECR
             aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
