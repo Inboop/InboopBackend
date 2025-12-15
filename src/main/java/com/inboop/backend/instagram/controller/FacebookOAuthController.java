@@ -62,7 +62,7 @@ public class FacebookOAuthController {
     @GetMapping("/authorize")
     public ResponseEntity<Void> authorize(
             @RequestParam(required = false) String state,
-            @RequestParam(required = false, defaultValue = "/settings/instagram") String redirect) {
+            @RequestParam(required = false, defaultValue = "/settings") String redirect) {
 
         if (appId == null || appId.isEmpty()) {
             log.error("Facebook App ID is not configured");

@@ -65,7 +65,7 @@ public class FacebookOAuthCallbackController {
         // Handle error from Facebook
         if (error != null) {
             log.error("Facebook OAuth error: {} - {}", error, errorDescription);
-            String errorRedirect = frontendUrl + "/settings/instagram?error=" +
+            String errorRedirect = frontendUrl + "/settings?error=" +
                     URLEncoder.encode(errorDescription != null ? errorDescription : error, StandardCharsets.UTF_8);
             return ResponseEntity.status(HttpStatus.FOUND)
                     .header(HttpHeaders.LOCATION, errorRedirect)
@@ -74,14 +74,14 @@ public class FacebookOAuthCallbackController {
 
         if (code == null || code.isEmpty()) {
             log.error("No authorization code received from Facebook");
-            String errorRedirect = frontendUrl + "/settings/instagram?error=no_code";
+            String errorRedirect = frontendUrl + "/settings?error=no_code";
             return ResponseEntity.status(HttpStatus.FOUND)
                     .header(HttpHeaders.LOCATION, errorRedirect)
                     .build();
         }
 
         // Parse state to get original redirect path
-        String redirectPath = "/settings/instagram";
+        String redirectPath = "/settings";
         if (state != null && !state.isEmpty()) {
             try {
                 String decodedState = URLDecoder.decode(state, StandardCharsets.UTF_8);

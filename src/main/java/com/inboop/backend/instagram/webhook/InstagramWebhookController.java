@@ -10,7 +10,8 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/webhooks/instagram")
-public class InstagramWebhookController {
+public class
+InstagramWebhookController {
 
     private static final Logger logger = LoggerFactory.getLogger(InstagramWebhookController.class);
 
