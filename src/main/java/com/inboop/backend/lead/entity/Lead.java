@@ -59,7 +59,7 @@ public class Lead {
     @Column(name = "detected_language")
     private String detectedLanguage;
 
-    @Column(name = "value", precision = 10, scale = 2)
+    @Column(name = "\"value\"", precision = 10, scale = 2)
     private BigDecimal value;
 
     @Column(name = "notes", columnDefinition = "TEXT")

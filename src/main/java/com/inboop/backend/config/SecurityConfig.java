@@ -57,6 +57,12 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/v1/webhooks/**").permitAll()
                         .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/google").permitAll()
+                        // Meta callback endpoints (no auth - verified via signed_request)
+                        // META APP REVIEW NOTE: These endpoints must be public because:
+                        // 1. Meta's servers call them directly (no user session)
+                        // 2. Authentication is via HMAC signature verification using app secret
+                        // 3. Invalid signatures are rejected in the controller
+                        .requestMatchers("/meta/**").permitAll()
                         // Protected endpoints
                         .requestMatchers("/api/v1/**").authenticated()
                         .requestMatchers("/dashboard").authenticated()
