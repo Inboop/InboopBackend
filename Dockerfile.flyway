@@ -1,0 +1,13 @@
+# Flyway migration container
+# Runs migrations once and exits
+
+FROM flyway/flyway:10-alpine
+
+# Copy migration scripts
+COPY src/main/resources/db/migration /flyway/sql
+
+# Flyway will exit after running migrations
+# Configuration is passed via environment variables:
+# - FLYWAY_URL (jdbc:postgresql://host:port/database)
+# - FLYWAY_USER
+# - FLYWAY_PASSWORD

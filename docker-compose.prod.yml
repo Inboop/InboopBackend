@@ -2,9 +2,28 @@
 # Uses IAM Role for AWS credentials (no need to mount ~/.aws)
 
 services:
+  # Flyway migration container - runs once before app starts
+  # Requires DB_HOST (e.g., inboop-db.xxx.rds.amazonaws.com) and DB_NAME (e.g., postgres)
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: inboop-flyway
+    command: >
+      -url=jdbc:postgresql://${DB_HOST}:5432/${DB_NAME:-postgres}
+      -user=${DB_USER}
+      -password=${DB_PASSWORD}
+      -baselineOnMigrate=true
+      -baselineVersion=0
+      -connectRetries=10
+      migrate
+    volumes:
+      - ./src/main/resources/db/migration:/flyway/sql:ro
+
   app:
     image: ${ECR_IMAGE:-058264276362.dkr.ecr.us-east-2.amazonaws.com/inboop-backend:latest}
     container_name: inboop-backend
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     environment:

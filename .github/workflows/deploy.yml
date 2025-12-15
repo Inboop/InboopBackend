@@ -101,9 +101,20 @@ jobs:
             echo "=== Stopping current container ==="
             docker-compose -f docker-compose.prod.yml down --timeout 30 || true
 
-            # Start new container
-            echo "=== Starting new container ==="
-            docker-compose -f docker-compose.prod.yml up -d
+            # Run Flyway migrations first
+            echo "=== Running database migrations ==="
+            docker-compose -f docker-compose.prod.yml up flyway
+
+            # Check if migrations succeeded
+            if [ $? -ne 0 ]; then
+              echo "=== MIGRATION FAILED ==="
+              docker logs inboop-flyway --tail 50
+              exit 1
+            fi
+
+            # Start app container (flyway already completed)
+            echo "=== Starting app container ==="
+            docker-compose -f docker-compose.prod.yml up -d app
 
             # Wait for container to be healthy
             echo "=== Waiting for health check ==="
