@@ -15,20 +15,36 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-2}
       AWS_SECRET_NAME: ${AWS_SECRET_NAME}
 
-      # Database URL (credentials fetched from Secrets Manager)
-      DB_URL: jdbc:postgresql://${DB_HOST}:5432/${DB_NAME:-inboop}
+      # Database Configuration
+      DB_URL: ${DB_URL}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_DRIVER: org.postgresql.Driver
+      DB_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
       DDL_AUTO: ${DDL_AUTO:-update}
+
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
 
       # OAuth (set in .env)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      BACKEND_URL: ${BACKEND_URL:-http://localhost:8080}
+      BACKEND_URL: ${BACKEND_URL:-https://api.inboop.com}
 
       # CORS
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://inboop.com,https://app.inboop.com}
 
       # Instagram
       INSTAGRAM_WEBHOOK_VERIFY_TOKEN: ${INSTAGRAM_WEBHOOK_VERIFY_TOKEN:-inboop_verify_token}
+
+      # Disable H2 console in production
+      H2_CONSOLE_ENABLED: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
     logging:
       driver: "json-file"

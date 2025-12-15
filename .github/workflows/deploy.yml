@@ -67,33 +67,93 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      - name: Deploy to EC2
+      - name: Deploy to EC2 with rollback support
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: ECR_REGISTRY,IMAGE_TAG,ECR_REPOSITORY
           script: |
             set -e
             cd /opt/inboop
 
-            # Pull latest code
-            git pull origin master
+            echo "=== Starting deployment ==="
+            echo "Image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
             # Login to ECR
-            aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+            aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # Pull latest image
-            docker pull ${{ steps.login-ecr.outputs.registry }}/inboop-backend:latest
+            # Save current image tag for rollback
+            CURRENT_IMAGE=$(docker inspect --format='{{.Config.Image}}' inboop-backend 2>/dev/null || echo "none")
+            echo "Current image: $CURRENT_IMAGE"
+            echo "$CURRENT_IMAGE" > /opt/inboop/.previous_image
 
-            # Stop existing container
-            docker-compose -f docker-compose.prod.yml down || true
+            # Pull new image
+            echo "=== Pulling new image ==="
+            docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            docker pull $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-            # Start with new image
+            # Stop existing container gracefully
+            echo "=== Stopping current container ==="
+            docker-compose -f docker-compose.prod.yml down --timeout 30 || true
+
+            # Start new container
+            echo "=== Starting new container ==="
             docker-compose -f docker-compose.prod.yml up -d
 
-            # Health check
-            sleep 30
-            curl -f http://localhost:8080/actuator/health || exit 1
+            # Wait for container to be healthy
+            echo "=== Waiting for health check ==="
+            HEALTH_CHECK_RETRIES=12
+            HEALTH_CHECK_INTERVAL=10
 
-            echo "Deployment successful!"
+            for i in $(seq 1 $HEALTH_CHECK_RETRIES); do
+              echo "Health check attempt $i/$HEALTH_CHECK_RETRIES..."
+              sleep $HEALTH_CHECK_INTERVAL
+
+              # Check if container is running
+              if ! docker ps | grep -q inboop-backend; then
+                echo "Container not running, checking logs..."
+                docker logs inboop-backend --tail 50
+
+                # Rollback
+                echo "=== ROLLBACK: Container failed to start ==="
+                if [ -f /opt/inboop/.previous_image ] && [ "$CURRENT_IMAGE" != "none" ]; then
+                  docker pull $CURRENT_IMAGE || true
+                  docker-compose -f docker-compose.prod.yml down || true
+                  docker tag $CURRENT_IMAGE $ECR_REGISTRY/$ECR_REPOSITORY:latest || true
+                  docker-compose -f docker-compose.prod.yml up -d || true
+                fi
+                exit 1
+              fi
+
+              # Check health endpoint
+              if curl -sf http://localhost:8080/actuator/health > /dev/null 2>&1; then
+                echo "=== Health check passed! ==="
+                break
+              fi
+
+              if [ $i -eq $HEALTH_CHECK_RETRIES ]; then
+                echo "=== Health check failed after $HEALTH_CHECK_RETRIES attempts ==="
+                docker logs inboop-backend --tail 100
+
+                # Rollback
+                echo "=== ROLLBACK: Health check failed ==="
+                if [ -f /opt/inboop/.previous_image ] && [ "$CURRENT_IMAGE" != "none" ]; then
+                  docker-compose -f docker-compose.prod.yml down || true
+                  docker tag $CURRENT_IMAGE $ECR_REGISTRY/$ECR_REPOSITORY:latest || true
+                  docker-compose -f docker-compose.prod.yml up -d || true
+                fi
+                exit 1
+              fi
+            done
+
+            # Cleanup old images (keep last 3)
+            echo "=== Cleaning up old images ==="
+            docker image prune -f || true
+
+            echo "=== Deployment successful! ==="
+            docker ps
