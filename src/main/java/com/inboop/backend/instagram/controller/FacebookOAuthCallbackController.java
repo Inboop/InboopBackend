@@ -29,8 +29,6 @@ import java.nio.charset.StandardCharsets;
 public class FacebookOAuthCallbackController {
 
     private static final Logger log = LoggerFactory.getLogger(FacebookOAuthCallbackController.class);
-    private static final String FACEBOOK_TOKEN_URL = "https://graph.facebook.com/v21.0/oauth/access_token";
-    private static final String FACEBOOK_DEBUG_TOKEN_URL = "https://graph.facebook.com/v21.0/debug_token";
 
     @Value("${facebook.app.id:}")
     private String appId;
@@ -40,6 +38,9 @@ public class FacebookOAuthCallbackController {
 
     @Value("${facebook.oauth.redirect-uri:}")
     private String redirectUri;
+
+    @Value("${facebook.oauth.token-uri:https://graph.facebook.com/v21.0/oauth/access_token}")
+    private String tokenUri;
 
     @Value("${app.frontend.url:https://app.inboop.com}")
     private String frontendUrl;
@@ -97,12 +98,13 @@ public class FacebookOAuthCallbackController {
         }
 
         try {
-            // Exchange code for access token
-            String tokenUrl = UriComponentsBuilder.fromHttpUrl(FACEBOOK_TOKEN_URL)
+            // Exchange code for access token using UriComponentsBuilder
+            String tokenUrl = UriComponentsBuilder.fromHttpUrl(tokenUri)
                     .queryParam("client_id", appId)
                     .queryParam("client_secret", appSecret)
                     .queryParam("redirect_uri", redirectUri)
                     .queryParam("code", code)
+                    .build()
                     .toUriString();
 
             log.info("Exchanging authorization code for access token");
@@ -132,7 +134,7 @@ public class FacebookOAuthCallbackController {
             // 4. Redirect without exposing the token in URL
 
             String successRedirect = frontendUrl + redirectPath +
-                    "?success=true&token=" + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
+                    "?success=true&instagram_token=" + URLEncoder.encode(accessToken, StandardCharsets.UTF_8);
 
             return ResponseEntity.status(HttpStatus.FOUND)
                     .header(HttpHeaders.LOCATION, successRedirect)
