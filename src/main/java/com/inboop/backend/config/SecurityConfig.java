@@ -12,6 +12,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
@@ -25,17 +26,11 @@ import java.util.Arrays;
  *
  * OAUTH2 LOGIN FLOW (handled by Spring Security):
  * 1. User visits GET /oauth2/authorization/facebook
- * 2. Spring redirects to Facebook with proper URL encoding and CSRF state
+ * 2. Spring redirects to Facebook with proper URL encoding, CSRF state, and config_id
  * 3. User authorizes on Facebook
  * 4. Facebook redirects to GET /login/oauth2/code/facebook?code=xxx&state=yyy
  * 5. Spring validates state, exchanges code for token
- * 6. FacebookOAuth2SuccessHandler redirects to frontend with token
- *
- * WHY THIS IS SAFER THAN MANUAL URL BUILDING:
- * - Spring generates cryptographically secure 'state' parameter
- * - State is validated on callback (prevents CSRF attacks)
- * - URLs are properly encoded (prevents injection attacks)
- * - Token exchange happens server-side securely
+ * 6. FacebookOAuth2SuccessHandler stores token and redirects to frontend
  */
 @Configuration
 public class SecurityConfig {
@@ -43,16 +38,22 @@ public class SecurityConfig {
     private final UserDetailsService customUserDetailsService;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final FacebookOAuth2SuccessHandler facebookOAuth2SuccessHandler;
+    private final ClientRegistrationRepository clientRegistrationRepository;
 
     @Value("${app.cors.allowed-origins:http://localhost:3000}")
     private String allowedOriginsString;
 
+    @Value("${meta.facebook.config-id:}")
+    private String facebookConfigId;
+
     public SecurityConfig(UserDetailsService customUserDetailsService,
                           JwtAuthenticationFilter jwtAuthenticationFilter,
-                          FacebookOAuth2SuccessHandler facebookOAuth2SuccessHandler) {
+                          FacebookOAuth2SuccessHandler facebookOAuth2SuccessHandler,
+                          ClientRegistrationRepository clientRegistrationRepository) {
         this.customUserDetailsService = customUserDetailsService;
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.facebookOAuth2SuccessHandler = facebookOAuth2SuccessHandler;
+        this.clientRegistrationRepository = clientRegistrationRepository;
     }
 
     @Bean
@@ -93,11 +94,17 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 // Enable OAuth2 Login for Facebook/Instagram
-                // Spring Security handles:
-                // - URL generation with proper encoding
-                // - CSRF state parameter generation and validation
-                // - Authorization code exchange for access token
+                // Uses custom authorization request resolver to add config_id parameter
                 .oauth2Login(oauth2 -> oauth2
+                        .authorizationEndpoint(authorization -> authorization
+                                .authorizationRequestResolver(
+                                        new FacebookOAuth2AuthorizationRequestResolver(
+                                                clientRegistrationRepository,
+                                                "/oauth2/authorization",
+                                                facebookConfigId
+                                        )
+                                )
+                        )
                         .successHandler(facebookOAuth2SuccessHandler)
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
