@@ -5,7 +5,11 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "messages")
+@Table(name = "messages", indexes = {
+        @Index(name = "idx_message_conversation_id", columnList = "conversation_id"),
+        @Index(name = "idx_message_instagram_id", columnList = "instagram_message_id"),
+        @Index(name = "idx_message_sent_at", columnList = "sent_at")
+})
 public class Message {
 
     @Id
