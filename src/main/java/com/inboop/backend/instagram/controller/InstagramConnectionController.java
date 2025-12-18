@@ -4,6 +4,8 @@ import com.inboop.backend.auth.entity.User;
 import com.inboop.backend.auth.repository.UserRepository;
 import com.inboop.backend.business.entity.Business;
 import com.inboop.backend.business.repository.BusinessRepository;
+import com.inboop.backend.instagram.dto.IntegrationStatusResponse;
+import com.inboop.backend.instagram.service.InstagramIntegrationCheckService;
 import com.inboop.backend.instagram.util.SecureCookieUtil;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
@@ -43,6 +45,7 @@ public class InstagramConnectionController {
     private final SecureCookieUtil secureCookieUtil;
     private final UserRepository userRepository;
     private final BusinessRepository businessRepository;
+    private final InstagramIntegrationCheckService integrationCheckService;
 
     @Value("${spring.security.oauth2.client.registration.facebook.client-id:}")
     private String clientId;
@@ -55,10 +58,12 @@ public class InstagramConnectionController {
 
     public InstagramConnectionController(SecureCookieUtil secureCookieUtil,
                                          UserRepository userRepository,
-                                         BusinessRepository businessRepository) {
+                                         BusinessRepository businessRepository,
+                                         InstagramIntegrationCheckService integrationCheckService) {
         this.secureCookieUtil = secureCookieUtil;
         this.userRepository = userRepository;
         this.businessRepository = businessRepository;
+        this.integrationCheckService = integrationCheckService;
     }
 
     /**
@@ -134,12 +139,41 @@ public class InstagramConnectionController {
     }
 
     /**
-     * Get Instagram connection status.
+     * Get Instagram integration status with real-time checks.
+     *
+     * This endpoint performs comprehensive checks:
+     * - Verifies token validity
+     * - Checks Facebook Pages accessibility
+     * - Verifies Instagram Business Account linkage
+     * - Detects permission issues and cooldown periods
      *
      * GET /api/v1/integrations/instagram/status
      */
     @GetMapping("/api/v1/integrations/instagram/status")
-    public ResponseEntity<Map<String, Object>> getConnectionStatus(
+    public ResponseEntity<IntegrationStatusResponse> getIntegrationStatus(
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElse(null);
+
+        if (user == null) {
+            return ResponseEntity.ok(IntegrationStatusResponse.notConnected());
+        }
+
+        // Perform comprehensive integration check
+        IntegrationStatusResponse status = integrationCheckService.checkStatus(user);
+
+        log.info("Integration status check for user {}: {}", user.getId(), status.getStatus());
+
+        return ResponseEntity.ok(status);
+    }
+
+    /**
+     * Get basic Instagram connection status (lightweight check, no API calls).
+     *
+     * GET /api/v1/integrations/instagram/status/basic
+     */
+    @GetMapping("/api/v1/integrations/instagram/status/basic")
+    public ResponseEntity<Map<String, Object>> getBasicConnectionStatus(
             @AuthenticationPrincipal UserDetails userDetails) {
 
         User user = userRepository.findByEmail(userDetails.getUsername()).orElse(null);
@@ -154,7 +188,7 @@ public class InstagramConnectionController {
         // Find user's active businesses with Instagram connected
         List<Business> businesses = businessRepository.findByOwnerId(user.getId());
         List<Business> connectedBusinesses = businesses.stream()
-                .filter(b -> b.getIsActive() && b.getAccessToken() != null && b.getInstagramBusinessAccountId() != null)
+                .filter(b -> Boolean.TRUE.equals(b.getIsActive()) && b.getAccessToken() != null && b.getInstagramBusinessAccountId() != null)
                 .toList();
 
         if (!connectedBusinesses.isEmpty()) {
@@ -166,7 +200,7 @@ public class InstagramConnectionController {
                     "instagramBusinessAccountId", primary.getInstagramBusinessAccountId(),
                     "instagramUsername", primary.getInstagramUsername() != null ? primary.getInstagramUsername() : "",
                     "facebookPageId", primary.getFacebookPageId() != null ? primary.getFacebookPageId() : "",
-                    "businessName", primary.getName()
+                    "businessName", primary.getName() != null ? primary.getName() : ""
             ));
         }
 
