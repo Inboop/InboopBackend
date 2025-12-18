@@ -113,17 +113,38 @@ public class InstagramBusinessService {
      */
     private List<FacebookPage> fetchFacebookPages(String accessToken) {
         String url = GRAPH_API_BASE + "/me/accounts?access_token=" + accessToken;
+        log.debug("Fetching Facebook Pages from: {}", GRAPH_API_BASE + "/me/accounts");
 
         try {
             ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
             Map<String, Object> body = response.getBody();
 
-            if (body == null || !body.containsKey("data")) {
-                log.warn("No pages found in response");
+            log.debug("Facebook /me/accounts response: {}", body);
+
+            if (body == null) {
+                log.warn("Null response from Facebook /me/accounts API");
+                return List.of();
+            }
+
+            // Check for error in response
+            if (body.containsKey("error")) {
+                Map<String, Object> error = (Map<String, Object>) body.get("error");
+                log.error("Facebook API error: {} - {}", error.get("code"), error.get("message"));
+                throw new RuntimeException("Facebook API error: " + error.get("message"));
+            }
+
+            if (!body.containsKey("data")) {
+                log.warn("No 'data' field in Facebook response. Full response: {}", body);
                 return List.of();
             }
 
             List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
+
+            if (data == null || data.isEmpty()) {
+                log.warn("Facebook returned empty pages list. User may not have any Pages or lacks pages_show_list permission.");
+                return List.of();
+            }
+
             List<FacebookPage> pages = new ArrayList<>();
 
             for (Map<String, Object> pageData : data) {
@@ -132,12 +153,13 @@ public class InstagramBusinessService {
                 page.name = (String) pageData.get("name");
                 page.accessToken = (String) pageData.get("access_token"); // Page access token
                 pages.add(page);
+                log.debug("Found Facebook Page: {} (ID: {})", page.name, page.id);
             }
 
             return pages;
         } catch (RestClientException e) {
-            log.error("Failed to fetch Facebook Pages: {}", e.getMessage());
-            throw new RuntimeException("Failed to fetch Facebook Pages", e);
+            log.error("Failed to fetch Facebook Pages. Error: {} - Response: {}", e.getMessage(), e.getClass().getSimpleName());
+            throw new RuntimeException("Failed to fetch Facebook Pages: " + e.getMessage(), e);
         }
     }
 
