@@ -12,7 +12,12 @@ import java.util.HashSet;
 import java.util.Set;
 
 @Entity
-@Table(name = "leads")
+@Table(name = "leads", indexes = {
+        @Index(name = "idx_lead_business_id", columnList = "business_id"),
+        @Index(name = "idx_lead_conversation_id", columnList = "conversation_id"),
+        @Index(name = "idx_lead_status", columnList = "status"),
+        @Index(name = "idx_lead_created_at", columnList = "created_at")
+})
 public class Lead {
 
     @Id
@@ -77,7 +82,8 @@ public class Lead {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    // A lead belongs to one conversation (same customer can have multiple leads over time from same conversation)
+    // A lead belongs to one conversation (same customer can have multiple leads
+    // over time from same conversation)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "conversation_id")
     private Conversation conversation;
