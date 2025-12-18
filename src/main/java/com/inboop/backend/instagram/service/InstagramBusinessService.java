@@ -71,11 +71,11 @@ public class InstagramBusinessService {
             // Step 2: For each Page, check for linked Instagram Business Account
             for (FacebookPage page : pages) {
                 try {
-                    String instagramAccountId = fetchInstagramBusinessAccountId(page.id, accessToken);
+                    InstagramAccount igAccount = fetchInstagramBusinessAccount(page.id, accessToken);
 
-                    if (instagramAccountId != null) {
+                    if (igAccount != null) {
                         // Step 3: Persist the mapping
-                        Business business = findOrCreateBusiness(user, facebookUserId, page, instagramAccountId);
+                        Business business = findOrCreateBusiness(user, facebookUserId, page, igAccount);
                         business.setAccessToken(accessToken);
                         if (tokenExpiresAt != null) {
                             business.setTokenExpiresAt(LocalDateTime.ofInstant(tokenExpiresAt, ZoneId.systemDefault()));
@@ -84,8 +84,8 @@ public class InstagramBusinessService {
                         businessRepository.save(business);
                         connectedBusinesses.add(business);
 
-                        log.info("Connected Instagram Business Account: {} for Page: {} ({})",
-                                instagramAccountId, page.name, page.id);
+                        log.info("Connected Instagram Business Account: {} (@{}) for Page: {} ({})",
+                                igAccount.id, igAccount.username, page.name, page.id);
                     } else {
                         log.debug("Page {} ({}) does not have a linked Instagram Business Account",
                                 page.name, page.id);
@@ -142,28 +142,60 @@ public class InstagramBusinessService {
     }
 
     /**
-     * Fetch the Instagram Business Account ID linked to a Facebook Page.
-     * GET https://graph.facebook.com/v21.0/{page-id}?fields=instagram_business_account
+     * Fetch the Instagram Business Account linked to a Facebook Page.
      *
-     * @return Instagram Business Account ID, or null if not linked
+     * Step 1: GET /{page-id}?fields=instagram_business_account to get IG account ID
+     * Step 2: GET /{ig-account-id}?fields=id,username,name,profile_picture_url to get details
+     *
+     * @return InstagramAccount with id and username, or null if not linked
      */
-    private String fetchInstagramBusinessAccountId(String pageId, String accessToken) {
-        String url = GRAPH_API_BASE + "/" + pageId + "?fields=instagram_business_account&access_token=" + accessToken;
+    private InstagramAccount fetchInstagramBusinessAccount(String pageId, String accessToken) {
+        // Step 1: Get Instagram Business Account ID from the Page
+        String pageUrl = GRAPH_API_BASE + "/" + pageId + "?fields=instagram_business_account&access_token=" + accessToken;
 
         try {
-            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
-            Map<String, Object> body = response.getBody();
+            ResponseEntity<Map> pageResponse = restTemplate.getForEntity(pageUrl, Map.class);
+            Map<String, Object> pageBody = pageResponse.getBody();
 
-            if (body == null) {
+            if (pageBody == null) {
                 return null;
             }
 
-            Map<String, Object> instagramAccount = (Map<String, Object>) body.get("instagram_business_account");
-            if (instagramAccount == null) {
+            Map<String, Object> instagramAccountRef = (Map<String, Object>) pageBody.get("instagram_business_account");
+            if (instagramAccountRef == null) {
                 return null;
             }
 
-            return (String) instagramAccount.get("id");
+            String igAccountId = (String) instagramAccountRef.get("id");
+            if (igAccountId == null) {
+                return null;
+            }
+
+            // Step 2: Fetch Instagram account details (username, name, profile picture)
+            String igUrl = GRAPH_API_BASE + "/" + igAccountId + "?fields=id,username,name,profile_picture_url&access_token=" + accessToken;
+
+            try {
+                ResponseEntity<Map> igResponse = restTemplate.getForEntity(igUrl, Map.class);
+                Map<String, Object> igBody = igResponse.getBody();
+
+                InstagramAccount account = new InstagramAccount();
+                account.id = igAccountId;
+
+                if (igBody != null) {
+                    account.username = (String) igBody.get("username");
+                    account.name = (String) igBody.get("name");
+                    account.profilePictureUrl = (String) igBody.get("profile_picture_url");
+                }
+
+                return account;
+            } catch (RestClientException e) {
+                // If we can't get details, still return the account with just the ID
+                log.warn("Failed to fetch Instagram account details for {}: {}", igAccountId, e.getMessage());
+                InstagramAccount account = new InstagramAccount();
+                account.id = igAccountId;
+                return account;
+            }
+
         } catch (RestClientException e) {
             log.warn("Failed to fetch Instagram account for page {}: {}", pageId, e.getMessage());
             return null;
@@ -174,12 +206,30 @@ public class InstagramBusinessService {
      * Find existing business or create a new one.
      */
     private Business findOrCreateBusiness(User user, String facebookUserId,
-                                          FacebookPage page, String instagramAccountId) {
+                                          FacebookPage page, InstagramAccount igAccount) {
         // First try to find by Instagram Business Account ID
-        return businessRepository.findByInstagramBusinessAccountId(instagramAccountId)
+        return businessRepository.findByInstagramBusinessAccountId(igAccount.id)
+                .map(existing -> {
+                    // Update existing business with latest info
+                    existing.setFacebookUserId(facebookUserId);
+                    existing.setFacebookPageId(page.id);
+                    existing.setName(page.name);
+                    if (igAccount.username != null) {
+                        existing.setInstagramUsername(igAccount.username);
+                    }
+                    return existing;
+                })
                 .orElseGet(() -> {
                     // Try to find by Facebook Page ID
                     return businessRepository.findByFacebookPageId(page.id)
+                            .map(existing -> {
+                                // Update existing business
+                                existing.setInstagramBusinessAccountId(igAccount.id);
+                                if (igAccount.username != null) {
+                                    existing.setInstagramUsername(igAccount.username);
+                                }
+                                return existing;
+                            })
                             .orElseGet(() -> {
                                 // Create new business
                                 Business newBusiness = new Business();
@@ -187,7 +237,10 @@ public class InstagramBusinessService {
                                 newBusiness.setName(page.name);
                                 newBusiness.setFacebookUserId(facebookUserId);
                                 newBusiness.setFacebookPageId(page.id);
-                                newBusiness.setInstagramBusinessAccountId(instagramAccountId);
+                                newBusiness.setInstagramBusinessAccountId(igAccount.id);
+                                if (igAccount.username != null) {
+                                    newBusiness.setInstagramUsername(igAccount.username);
+                                }
                                 return newBusiness;
                             });
                 });
@@ -200,5 +253,15 @@ public class InstagramBusinessService {
         String id;
         String name;
         String accessToken;
+    }
+
+    /**
+     * Simple DTO for Instagram Business Account data.
+     */
+    private static class InstagramAccount {
+        String id;
+        String username;
+        String name;
+        String profilePictureUrl;
     }
 }
