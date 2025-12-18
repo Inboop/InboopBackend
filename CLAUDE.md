@@ -491,6 +491,86 @@ instagram_business_basic,instagram_business_manage_messages,instagram_manage_com
 - Clear browser cache if getting "Can't load URL" errors after configuration changes
 
 ### Key Files
-- `instagram/controller/FacebookOAuthController.java` - Initiates OAuth flow
-- `instagram/controller/FacebookOAuthCallbackController.java` - Handles callback, exchanges code for token
-- `application.properties` - OAuth configuration (facebook.app.id, facebook.app.secret, etc.)
+- `instagram/controller/InstagramConnectionController.java` - OAuth initiation with one-time tokens
+- `instagram/handler/FacebookOAuth2SuccessHandler.java` - OAuth callback processing
+- `instagram/service/InstagramBusinessService.java` - Fetches Pages and IG accounts from Graph API
+- `instagram/service/InstagramIntegrationCheckService.java` - Real-time status verification
+- `config/FacebookOAuth2AuthorizationRequestResolver.java` - Adds config_id and auth_type params
+- `instagram/util/SecureCookieUtil.java` - HMAC-SHA256 cookie signing
+- `application.properties` - OAuth configuration
+
+### Full Documentation
+See `docs/FACEBOOK-OAUTH-FLOW.md` for complete OAuth flow documentation with diagrams.
+
+## Instagram Integration Status API
+
+The integration status endpoint performs real-time checks against Meta's Graph API.
+
+### Endpoint
+```
+GET /api/v1/integrations/instagram/status
+Authorization: Bearer <JWT>
+```
+
+### Response Structure
+```json
+{
+  "status": "CONNECTED_READY | BLOCKED | NOT_CONNECTED | PENDING",
+  "reason": "NO_PAGES_FOUND | IG_NOT_LINKED_TO_PAGE | TOKEN_EXPIRED | ...",
+  "message": "User-friendly message",
+  "retryAt": "ISO8601 timestamp (for ADMIN_COOLDOWN)",
+  "details": { "instagramUsername": "...", "businessName": "..." },
+  "actions": {
+    "reconnectUrl": "/oauth2/authorization/facebook",
+    "businessSettingsUrl": "https://business.facebook.com/settings",
+    "businessSuiteUrl": "https://business.facebook.com/latest/home",
+    "pageCreateUrl": "https://www.facebook.com/pages/create"
+  }
+}
+```
+
+### Status Values
+| Status | Description |
+|--------|-------------|
+| `NOT_CONNECTED` | User never started OAuth or no token stored |
+| `CONNECTED_READY` | Instagram account connected and ready for DMs |
+| `BLOCKED` | Action required - see `reason` field |
+| `PENDING` | Processing (rarely used) |
+
+### Reason Codes (when BLOCKED)
+| Reason | User Action |
+|--------|-------------|
+| `NO_PAGES_FOUND` | Create a Facebook Page |
+| `IG_NOT_LINKED_TO_PAGE` | Link Instagram to Facebook Page |
+| `IG_NOT_BUSINESS` | Convert to Business/Creator account |
+| `OWNERSHIP_MISMATCH` | Check Business Manager permissions |
+| `ADMIN_COOLDOWN` | Wait 7 days (Meta requirement for new admins) |
+| `MISSING_PERMISSIONS` | Reconnect and approve all permissions |
+| `TOKEN_EXPIRED` | Reconnect account |
+| `API_ERROR` | Retry later |
+
+### Caching Behavior
+- Returns cached BLOCKED status if cooldown is active (no API call)
+- Returns cached CONNECTED_READY if verified within 5 minutes
+- Otherwise performs fresh API calls to Meta
+
+### Constants
+URL constants are centralized in `AppConstants.java`:
+- `OAUTH_FACEBOOK_PATH` - OAuth start path
+- `META_BUSINESS_SETTINGS_URL` - Business settings link
+- `META_BUSINESS_SUITE_URL` - Business suite link
+- `META_PAGE_CREATE_URL` - Create page link
+
+## Frontend Integration Notes
+
+### Settings Page (`app/(app)/settings/page.tsx`)
+- Instagram integration uses a wizard modal for BLOCKED states
+- WhatsApp and Facebook Messenger show "Coming Soon" (not implemented)
+- Status is fetched on mount and after OAuth callback
+- Uses `actions` object from API for all external URLs (not hardcoded)
+
+### OAuth Flow Frontend
+1. `POST /api/v1/integrations/instagram/connect` - Get one-time token
+2. Redirect to `redirectUrl` from response
+3. After OAuth callback, check URL params for `instagram_connected=true`
+4. Call status endpoint to verify actual connection state
