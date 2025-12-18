@@ -43,6 +43,7 @@ public class IntegrationStatusResponse {
     private Instant retryAt;
     private Map<String, Object> details;
     private List<NextAction> nextActions;
+    private Actions actions;
 
     // Constructors
     public IntegrationStatusResponse() {}
@@ -132,6 +133,66 @@ public class IntegrationStatusResponse {
 
     public void setNextActions(List<NextAction> nextActions) {
         this.nextActions = nextActions;
+    }
+
+    public Actions getActions() {
+        return actions;
+    }
+
+    public void setActions(Actions actions) {
+        this.actions = actions;
+    }
+
+    /**
+     * Action URLs for the frontend to use.
+     * Centralized here so frontend doesn't need to hardcode URLs.
+     */
+    public static class Actions {
+        private String reconnectUrl;
+        private String businessSettingsUrl;
+        private String businessSuiteUrl;
+        private String pageCreateUrl;
+
+        public Actions() {}
+
+        public Actions(String reconnectUrl, String businessSettingsUrl, String businessSuiteUrl, String pageCreateUrl) {
+            this.reconnectUrl = reconnectUrl;
+            this.businessSettingsUrl = businessSettingsUrl;
+            this.businessSuiteUrl = businessSuiteUrl;
+            this.pageCreateUrl = pageCreateUrl;
+        }
+
+        public String getReconnectUrl() {
+            return reconnectUrl;
+        }
+
+        public void setReconnectUrl(String reconnectUrl) {
+            this.reconnectUrl = reconnectUrl;
+        }
+
+        public String getBusinessSettingsUrl() {
+            return businessSettingsUrl;
+        }
+
+        public void setBusinessSettingsUrl(String businessSettingsUrl) {
+            this.businessSettingsUrl = businessSettingsUrl;
+        }
+
+        public String getBusinessSuiteUrl() {
+            return businessSuiteUrl;
+        }
+
+        public void setBusinessSuiteUrl(String businessSuiteUrl) {
+            this.businessSuiteUrl = businessSuiteUrl;
+        }
+
+        public String getPageCreateUrl() {
+            return pageCreateUrl;
+        }
+
+        public void setPageCreateUrl(String pageCreateUrl) {
+            this.pageCreateUrl = pageCreateUrl;
+        }
     }
 
     /**

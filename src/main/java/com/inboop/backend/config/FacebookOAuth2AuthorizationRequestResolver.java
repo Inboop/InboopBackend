@@ -10,15 +10,27 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Custom OAuth2AuthorizationRequestResolver that adds config_id to Facebook authorization requests.
+ * Custom OAuth2AuthorizationRequestResolver that adds config_id and auth_type to Facebook authorization requests.
  *
  * This is required for Instagram Business Login which uses a configuration ID
  * to define the permissions and settings for the OAuth flow.
+ *
+ * auth_type=rerequest forces Meta to re-prompt for declined permissions.
  */
 public class FacebookOAuth2AuthorizationRequestResolver implements OAuth2AuthorizationRequestResolver {
 
     private final DefaultOAuth2AuthorizationRequestResolver defaultResolver;
     private final String facebookConfigId;
+
+    /**
+     * Meta's auth_type parameter values:
+     * - "rerequest": Forces re-prompt for declined permissions
+     * - "reauthenticate": Forces login even if already logged in (more disruptive)
+     *
+     * We use "rerequest" to ensure users can grant permissions they may have
+     * previously declined, without forcing a full re-authentication.
+     */
+    private static final String AUTH_TYPE_REREQUEST = "rerequest";
 
     public FacebookOAuth2AuthorizationRequestResolver(
             ClientRegistrationRepository clientRegistrationRepository,
@@ -46,7 +58,7 @@ public class FacebookOAuth2AuthorizationRequestResolver implements OAuth2Authori
             return null;
         }
 
-        // Only add config_id for Facebook registration
+        // Only add custom parameters for Facebook registration
         String registrationId = authorizationRequest.getAttribute("registration_id");
         if (!"facebook".equals(registrationId)) {
             // Check if the authorization URI contains facebook.com
@@ -56,9 +68,10 @@ public class FacebookOAuth2AuthorizationRequestResolver implements OAuth2Authori
             }
         }
 
-        // Add config_id to additional parameters
+        // Add config_id and auth_type to additional parameters
         Map<String, Object> additionalParameters = new HashMap<>(authorizationRequest.getAdditionalParameters());
         additionalParameters.put("config_id", facebookConfigId);
+        additionalParameters.put("auth_type", AUTH_TYPE_REREQUEST);
 
         return OAuth2AuthorizationRequest.from(authorizationRequest)
                 .additionalParameters(additionalParameters)

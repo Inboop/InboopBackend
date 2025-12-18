@@ -4,11 +4,14 @@ import com.inboop.backend.auth.entity.User;
 import com.inboop.backend.business.entity.Business;
 import com.inboop.backend.business.repository.BusinessRepository;
 import com.inboop.backend.instagram.dto.IntegrationStatusResponse;
+import com.inboop.backend.instagram.dto.IntegrationStatusResponse.Actions;
 import com.inboop.backend.instagram.dto.IntegrationStatusResponse.NextAction;
 import com.inboop.backend.instagram.dto.IntegrationStatusResponse.Reason;
 import com.inboop.backend.instagram.dto.IntegrationStatusResponse.Status;
+import com.inboop.backend.shared.constant.AppConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,10 +48,27 @@ public class InstagramIntegrationCheckService {
 
     private final BusinessRepository businessRepository;
     private final RestTemplate restTemplate;
+    private final String backendBaseUrl;
 
-    public InstagramIntegrationCheckService(BusinessRepository businessRepository) {
+    public InstagramIntegrationCheckService(
+            BusinessRepository businessRepository,
+            @Value("${app.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.businessRepository = businessRepository;
         this.restTemplate = new RestTemplate();
+        this.backendBaseUrl = backendBaseUrl;
+    }
+
+    /**
+     * Build the actions object with URLs for frontend.
+     * No tokens are included in any URLs - reconnectUrl triggers OAuth flow.
+     */
+    private Actions buildActions() {
+        return new Actions(
+                backendBaseUrl + AppConstants.OAUTH_FACEBOOK_PATH,
+                AppConstants.META_BUSINESS_SETTINGS_URL,
+                AppConstants.META_BUSINESS_SUITE_URL,
+                AppConstants.META_PAGE_CREATE_URL
+        );
     }
 
     /**
@@ -67,7 +87,9 @@ public class InstagramIntegrationCheckService {
 
         if (businesses.isEmpty()) {
             log.info("[StatusCheck] Result: user_id={}, status=NOT_CONNECTED, reason=no_businesses_in_db", user.getId());
-            return IntegrationStatusResponse.notConnected();
+            IntegrationStatusResponse response = IntegrationStatusResponse.notConnected();
+            response.setActions(buildActions());
+            return response;
         }
 
         // Step 2: Find the primary business (prefer active ones)
@@ -82,7 +104,9 @@ public class InstagramIntegrationCheckService {
             if (retryAt.isAfter(LocalDateTime.now())) {
                 log.info("[StatusCheck] Result: user_id={}, status=BLOCKED, reason=ADMIN_COOLDOWN, retry_at={} (cached)",
                         user.getId(), retryAt);
-                return buildAdminCooldownResponse(business, retryAt);
+                IntegrationStatusResponse response = buildAdminCooldownResponse(business, retryAt);
+                response.setActions(buildActions());
+                return response;
             }
             // Cooldown expired - clear it and continue checking
             clearCooldown(business);
@@ -91,18 +115,22 @@ public class InstagramIntegrationCheckService {
         // Step 4: If no access token, not connected
         if (business.getAccessToken() == null) {
             log.info("[StatusCheck] Result: user_id={}, status=NOT_CONNECTED, reason=no_access_token", user.getId());
-            return IntegrationStatusResponse.notConnected();
+            IntegrationStatusResponse response = IntegrationStatusResponse.notConnected();
+            response.setActions(buildActions());
+            return response;
         }
 
         // Step 5: If recently verified (within 5 minutes) and was CONNECTED_READY, return cached
         if (canUseCachedStatus(business)) {
             log.info("[StatusCheck] Result: user_id={}, status=CONNECTED_READY (cached), ig_username={}",
                     user.getId(), business.getInstagramUsername());
-            return IntegrationStatusResponse.connectedReady(
+            IntegrationStatusResponse response = IntegrationStatusResponse.connectedReady(
                     business.getInstagramUsername(),
                     business.getFacebookPageId(),
                     business.getName()
             );
+            response.setActions(buildActions());
+            return response;
         }
 
         // Step 6: Perform real-time API checks
@@ -148,6 +176,7 @@ public class InstagramIntegrationCheckService {
         if (pagesResult.error != null) {
             updateBusinessWithError(business, pagesResult.errorReason);
             log.info("[StatusCheck] Result: user_id={}, status=BLOCKED, reason={}", user.getId(), pagesResult.errorReason);
+            pagesResult.error.setActions(buildActions());
             return pagesResult.error;
         }
 
@@ -161,7 +190,9 @@ public class InstagramIntegrationCheckService {
         if (pagesResult.pages.isEmpty()) {
             updateBusinessWithError(business, "NO_PAGES_FOUND");
             log.info("[StatusCheck] Result: user_id={}, status=BLOCKED, reason=NO_PAGES_FOUND", user.getId());
-            return buildNoPagesResponse();
+            IntegrationStatusResponse response = buildNoPagesResponse();
+            response.setActions(buildActions());
+            return response;
         }
 
         // Update stored page IDs
@@ -174,6 +205,7 @@ public class InstagramIntegrationCheckService {
         if (igResult.error != null) {
             updateBusinessWithError(business, igResult.errorReason);
             log.info("[StatusCheck] Result: user_id={}, status=BLOCKED, reason={}", user.getId(), igResult.errorReason);
+            igResult.error.setActions(buildActions());
             return igResult.error;
         }
 
@@ -186,11 +218,13 @@ public class InstagramIntegrationCheckService {
         log.info("[StatusCheck] Result: user_id={}, status=CONNECTED_READY, ig_account_id={}, ig_username={}",
                 user.getId(), business.getInstagramBusinessAccountId(), business.getInstagramUsername());
 
-        return IntegrationStatusResponse.connectedReady(
+        IntegrationStatusResponse response = IntegrationStatusResponse.connectedReady(
                 business.getInstagramUsername(),
                 business.getFacebookPageId(),
                 business.getName()
         );
+        response.setActions(buildActions());
+        return response;
     }
 
     /**
