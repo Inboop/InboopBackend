@@ -3,6 +3,7 @@ package com.inboop.backend.order.entity;
 import com.inboop.backend.auth.entity.User;
 import com.inboop.backend.order.enums.OrderStatus;
 import com.inboop.backend.order.enums.PaymentStatus;
+import com.inboop.backend.order.enums.TimelineEventType;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -22,6 +23,10 @@ public class OrderTimeline {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id", nullable = false)
     private Order order;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "event_type")
+    private TimelineEventType eventType = TimelineEventType.STATUS_CHANGE;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
@@ -61,6 +66,14 @@ public class OrderTimeline {
 
     public void setOrder(Order order) {
         this.order = order;
+    }
+
+    public TimelineEventType getEventType() {
+        return eventType;
+    }
+
+    public void setEventType(TimelineEventType eventType) {
+        this.eventType = eventType;
     }
 
     public OrderStatus getStatus() {

@@ -15,6 +15,7 @@ import com.inboop.backend.order.entity.OrderTimeline;
 import com.inboop.backend.order.enums.OrderStatus;
 import com.inboop.backend.order.enums.PaymentMethod;
 import com.inboop.backend.order.enums.PaymentStatus;
+import com.inboop.backend.order.enums.TimelineEventType;
 import com.inboop.backend.order.repository.OrderRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
@@ -473,6 +474,116 @@ public class OrderService {
         return OrderDetailDto.fromEntity(orderRepository.save(order));
     }
 
+    /**
+     * Update order items.
+     * Replaces all existing items with new items.
+     * Recalculates totalAmount.
+     * Disallowed if order is in terminal state (DELIVERED/CANCELLED).
+     */
+    public OrderDetailDto updateOrderItems(Long orderId, OrderActionRequest.UpdateItemsRequest request, User performedBy) {
+        Order order = getOrderOrThrow(orderId);
+
+        if (order.isTerminal()) {
+            throw new IllegalStateException("Cannot update items for order in terminal state: " + order.getStatus());
+        }
+
+        // Clear existing items
+        order.getItems().clear();
+
+        // Add new items and calculate total
+        BigDecimal calculatedTotal = BigDecimal.ZERO;
+        if (request.getItems() != null && !request.getItems().isEmpty()) {
+            for (OrderActionRequest.UpdateItemsRequest.ItemRequest itemReq : request.getItems()) {
+                if (itemReq.getName() == null || itemReq.getName().trim().isEmpty()) {
+                    continue; // Skip items without names
+                }
+
+                OrderItem item = new OrderItem();
+                item.setName(itemReq.getName().trim());
+                item.setQuantity(itemReq.getQuantity() != null ? itemReq.getQuantity() : 1);
+                item.setUnitPrice(itemReq.getUnitPrice() != null ? itemReq.getUnitPrice() : BigDecimal.ZERO);
+                order.addItem(item);
+
+                // Calculate total from items
+                BigDecimal lineTotal = item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity()));
+                calculatedTotal = calculatedTotal.add(lineTotal);
+            }
+        }
+
+        // Update total amount
+        order.setTotalAmount(calculatedTotal);
+
+        // Add timeline entry
+        addTimelineEntryWithType(order, TimelineEventType.ITEMS_UPDATED, order.getStatus(), null,
+                "Order items updated, new total: " + order.getCurrency() + " " + calculatedTotal, performedBy);
+
+        return OrderDetailDto.fromEntity(orderRepository.save(order));
+    }
+
+    /**
+     * Update shipping details.
+     * Allows partial updates - only updates fields that are provided.
+     * Disallowed if order is in terminal state (DELIVERED/CANCELLED).
+     */
+    public OrderDetailDto updateOrderShipping(Long orderId, OrderActionRequest.UpdateShippingRequest request, User performedBy) {
+        Order order = getOrderOrThrow(orderId);
+
+        if (order.isTerminal()) {
+            throw new IllegalStateException("Cannot update shipping for order in terminal state: " + order.getStatus());
+        }
+
+        StringBuilder changes = new StringBuilder();
+
+        // Update address if provided
+        if (request.getAddress() != null) {
+            OrderActionRequest.UpdateShippingRequest.AddressRequest addr = request.getAddress();
+            if (addr.getLine1() != null) {
+                order.setShippingAddressLine1(addr.getLine1());
+            }
+            if (addr.getLine2() != null) {
+                order.setShippingAddressLine2(addr.getLine2());
+            }
+            if (addr.getCity() != null) {
+                order.setShippingCity(addr.getCity());
+            }
+            if (addr.getState() != null) {
+                order.setShippingState(addr.getState());
+            }
+            if (addr.getPostalCode() != null) {
+                order.setShippingPostalCode(addr.getPostalCode());
+            }
+            if (addr.getCountry() != null) {
+                order.setShippingCountry(addr.getCountry());
+            }
+            changes.append("address updated");
+        }
+
+        // Update tracking if provided
+        if (request.getTracking() != null) {
+            OrderActionRequest.UpdateShippingRequest.TrackingRequest tracking = request.getTracking();
+            if (tracking.getCarrier() != null) {
+                order.setCarrier(tracking.getCarrier());
+            }
+            if (tracking.getTrackingId() != null) {
+                order.setTrackingNumber(tracking.getTrackingId());
+            }
+            if (tracking.getTrackingUrl() != null) {
+                order.setTrackingUrl(tracking.getTrackingUrl());
+            }
+            if (changes.length() > 0) {
+                changes.append(", ");
+            }
+            changes.append("tracking updated");
+        }
+
+        String note = changes.length() > 0 ? "Shipping details updated: " + changes : "Shipping details updated";
+
+        // Add timeline entry
+        addTimelineEntryWithType(order, TimelineEventType.SHIPPING_UPDATED, order.getStatus(), null, note, performedBy);
+
+        return OrderDetailDto.fromEntity(orderRepository.save(order));
+    }
+
     // Helper methods
 
     private Order getOrderOrThrow(Long orderId) {
@@ -511,6 +622,16 @@ public class OrderService {
 
     private void addTimelineEntry(Order order, OrderStatus status, PaymentStatus paymentStatus, String note, User performedBy) {
         OrderTimeline entry = new OrderTimeline();
+        entry.setStatus(status);
+        entry.setPaymentStatus(paymentStatus);
+        entry.setNote(note);
+        entry.setPerformedBy(performedBy);
+        order.addTimelineEntry(entry);
+    }
+
+    private void addTimelineEntryWithType(Order order, TimelineEventType eventType, OrderStatus status, PaymentStatus paymentStatus, String note, User performedBy) {
+        OrderTimeline entry = new OrderTimeline();
+        entry.setEventType(eventType);
         entry.setStatus(status);
         entry.setPaymentStatus(paymentStatus);
         entry.setNote(note);

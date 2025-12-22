@@ -186,6 +186,34 @@ public class OrderController {
     }
 
     /**
+     * Update order items.
+     * PATCH /api/v1/orders/{orderId}/items
+     */
+    @PatchMapping("/{orderId}/items")
+    public ResponseEntity<OrderDetailDto> updateOrderItems(
+            @PathVariable Long orderId,
+            @RequestBody OrderActionRequest.UpdateItemsRequest request
+    ) {
+        User currentUser = getCurrentUser();
+        OrderDetailDto order = orderService.updateOrderItems(orderId, request, currentUser);
+        return ResponseEntity.ok(order);
+    }
+
+    /**
+     * Update shipping details.
+     * PATCH /api/v1/orders/{orderId}/shipping
+     */
+    @PatchMapping("/{orderId}/shipping")
+    public ResponseEntity<OrderDetailDto> updateOrderShipping(
+            @PathVariable Long orderId,
+            @RequestBody OrderActionRequest.UpdateShippingRequest request
+    ) {
+        User currentUser = getCurrentUser();
+        OrderDetailDto order = orderService.updateOrderShipping(orderId, request, currentUser);
+        return ResponseEntity.ok(order);
+    }
+
+    /**
      * Get the current authenticated user.
      */
     private User getCurrentUser() {
