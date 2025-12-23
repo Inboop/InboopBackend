@@ -229,13 +229,21 @@ public class InstagramIntegrationCheckService {
 
     /**
      * Check Facebook Pages accessibility via /me/accounts.
+     * Returns pages with their page access tokens for subsequent API calls.
      */
     private PagesCheckResult checkFacebookPages(String accessToken) {
-        String url = GRAPH_API_BASE + "/me/accounts?access_token=" + accessToken;
+        String url = GRAPH_API_BASE + "/me/accounts?fields=id,name,access_token&access_token=" + accessToken;
 
         try {
             ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
             Map<String, Object> body = response.getBody();
+
+            // Log raw response for debugging (without tokens)
+            if (body != null) {
+                log.info("[StatusCheck] /me/accounts response: data_count={}, has_error={}",
+                        body.containsKey("data") ? ((List<?>) body.get("data")).size() : 0,
+                        body.containsKey("error"));
+            }
 
             if (body == null) {
                 log.warn("[StatusCheck] Null response from /me/accounts");
@@ -254,8 +262,14 @@ public class InstagramIntegrationCheckService {
             List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
 
             if (data == null) {
-                log.warn("[StatusCheck] No 'data' field in /me/accounts response");
+                log.warn("[StatusCheck] No 'data' field in /me/accounts response. Full response keys: {}", body.keySet());
                 return new PagesCheckResult(List.of());
+            }
+
+            // Log each page found (without exposing tokens)
+            for (Map<String, Object> page : data) {
+                log.info("[StatusCheck] Found page: id={}, name={}, has_access_token={}",
+                        page.get("id"), page.get("name"), page.containsKey("access_token"));
             }
 
             return new PagesCheckResult(data);
@@ -281,9 +295,15 @@ public class InstagramIntegrationCheckService {
 
     /**
      * Check Instagram Business Account status for each page.
+     * Uses PAGE access token (not user token) for querying instagram_business_account.
+     *
+     * @param business The business entity to update
+     * @param pages List of pages from /me/accounts (includes page access tokens)
+     * @param userAccessToken The user access token (fallback only)
+     * @param storedIgAccountId Previously seen IG account ID (for ownership mismatch detection)
      */
     private InstagramCheckResult checkInstagramAccounts(Business business, List<Map<String, Object>> pages,
-                                                         String accessToken, String storedIgAccountId) {
+                                                         String userAccessToken, String storedIgAccountId) {
         List<String> checkedPageIds = new ArrayList<>();
         String foundIgAccountId = null;
         String foundIgUsername = null;
@@ -293,24 +313,43 @@ public class InstagramIntegrationCheckService {
         for (Map<String, Object> page : pages) {
             String pageId = (String) page.get("id");
             String pageName = (String) page.get("name");
+            // CRITICAL: Use page access token, not user access token
+            String pageAccessToken = (String) page.get("access_token");
             checkedPageIds.add(pageId);
 
-            log.debug("[StatusCheck] Checking page_id={} for instagram_business_account", pageId);
+            // Determine which token to use
+            String tokenToUse = pageAccessToken != null ? pageAccessToken : userAccessToken;
+            String tokenType = pageAccessToken != null ? "page_token" : "user_token";
 
-            String igCheckUrl = GRAPH_API_BASE + "/" + pageId + "?fields=instagram_business_account&access_token=" + accessToken;
+            log.info("[StatusCheck] Checking page_id={} ({}) for instagram_business_account using {}",
+                    pageId, pageName, tokenType);
+
+            // Query for both instagram_business_account AND connected_instagram_account
+            String igCheckUrl = GRAPH_API_BASE + "/" + pageId +
+                    "?fields=instagram_business_account,connected_instagram_account&access_token=" + tokenToUse;
 
             try {
                 ResponseEntity<Map> response = restTemplate.getForEntity(igCheckUrl, Map.class);
                 Map<String, Object> body = response.getBody();
 
+                // Log the raw response structure (without token values)
+                if (body != null) {
+                    log.info("[StatusCheck] Page {} response: has_instagram_business_account={}, has_connected_instagram_account={}, keys={}",
+                            pageId,
+                            body.containsKey("instagram_business_account"),
+                            body.containsKey("connected_instagram_account"),
+                            body.keySet());
+                }
+
+                // First try instagram_business_account (primary)
                 if (body != null && body.containsKey("instagram_business_account")) {
                     Map<String, Object> igAccount = (Map<String, Object>) body.get("instagram_business_account");
                     String igId = (String) igAccount.get("id");
 
                     log.info("[StatusCheck] Found instagram_business_account: page_id={}, ig_account_id={}", pageId, igId);
 
-                    // Fetch username
-                    String username = fetchInstagramUsername(igId, accessToken);
+                    // Fetch username using page token
+                    String username = fetchInstagramUsername(igId, tokenToUse);
 
                     foundIgAccountId = igId;
                     foundIgUsername = username;
@@ -326,12 +365,37 @@ public class InstagramIntegrationCheckService {
                     business.setName(pageName);
 
                     break; // Found one, that's enough
-                } else {
-                    log.debug("[StatusCheck] No instagram_business_account for page_id={}", pageId);
                 }
 
+                // Fallback: try connected_instagram_account
+                if (body != null && body.containsKey("connected_instagram_account")) {
+                    Map<String, Object> igAccount = (Map<String, Object>) body.get("connected_instagram_account");
+                    String igId = (String) igAccount.get("id");
+
+                    log.info("[StatusCheck] Found connected_instagram_account (fallback): page_id={}, ig_account_id={}", pageId, igId);
+
+                    String username = fetchInstagramUsername(igId, tokenToUse);
+
+                    foundIgAccountId = igId;
+                    foundIgUsername = username;
+                    foundPageId = pageId;
+                    foundPageName = pageName;
+
+                    business.setInstagramBusinessAccountId(igId);
+                    business.setInstagramUsername(username);
+                    business.setFacebookPageId(pageId);
+                    business.setSelectedPageId(pageId);
+                    business.setLastIgAccountIdSeen(igId);
+                    business.setName(pageName);
+
+                    break;
+                }
+
+                log.info("[StatusCheck] No Instagram account linked to page_id={} ({})", pageId, pageName);
+
             } catch (HttpClientErrorException e) {
-                log.warn("[StatusCheck] Error checking page_id={}: status={}", pageId, e.getStatusCode());
+                log.warn("[StatusCheck] Error checking page_id={}: status={}, body={}",
+                        pageId, e.getStatusCode(), e.getResponseBodyAsString());
                 // Check for admin cooldown
                 if (isAdminCooldownError(e)) {
                     LocalDateTime retryAt = LocalDateTime.now().plus(7, ChronoUnit.DAYS);
@@ -341,13 +405,17 @@ public class InstagramIntegrationCheckService {
                     cooldownResponse.setApiError(parseApiErrorFromException(e));
                     return new InstagramCheckResult(cooldownResponse, "ADMIN_COOLDOWN");
                 }
+                // Log detailed error but continue checking other pages
+                IntegrationStatusResponse.ApiError apiError = parseApiErrorFromException(e);
+                log.warn("[StatusCheck] API error for page {}: code={}, message={}",
+                        pageId, apiError.getCode(), apiError.getMessage());
             } catch (RestClientException e) {
                 log.warn("[StatusCheck] Network error checking page_id={}: {}", pageId, e.getMessage());
             }
         }
 
-        log.info("[StatusCheck] Instagram check complete: checked_pages={}, ig_found={}",
-                checkedPageIds, foundIgAccountId != null);
+        log.info("[StatusCheck] Instagram check complete: checked_pages={}, ig_found={}, ig_id={}, ig_username={}",
+                checkedPageIds, foundIgAccountId != null, foundIgAccountId, foundIgUsername);
 
         if (foundIgAccountId == null) {
             // No IG account found on any page
