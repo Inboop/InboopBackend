@@ -239,7 +239,11 @@ public class InstagramIntegrationCheckService {
 
             if (body == null) {
                 log.warn("[StatusCheck] Null response from /me/accounts");
-                return new PagesCheckResult(buildApiErrorResponse("Empty response from Facebook API"), "API_ERROR");
+                IntegrationStatusResponse errorResponse = buildApiErrorResponse("Empty response from Facebook API");
+                errorResponse.setApiError(new IntegrationStatusResponse.ApiError(
+                        null, null, "EmptyResponse", "Facebook API returned an empty response", null
+                ));
+                return new PagesCheckResult(errorResponse, "API_ERROR");
             }
 
             // Check for API errors
@@ -258,13 +262,20 @@ public class InstagramIntegrationCheckService {
 
         } catch (HttpClientErrorException.Unauthorized e) {
             log.warn("[StatusCheck] Token expired or invalid (401)");
-            return new PagesCheckResult(buildTokenExpiredResponse(), "TOKEN_EXPIRED");
+            IntegrationStatusResponse.ApiError apiError = parseApiErrorFromException(e);
+            IntegrationStatusResponse response = buildTokenExpiredResponse();
+            response.setApiError(apiError);
+            return new PagesCheckResult(response, "TOKEN_EXPIRED");
         } catch (HttpClientErrorException e) {
             log.warn("[StatusCheck] HTTP error from /me/accounts: status={}", e.getStatusCode());
             return handleHttpError(e);
         } catch (RestClientException e) {
             log.error("[StatusCheck] Network error calling /me/accounts: {}", e.getMessage());
-            return new PagesCheckResult(buildApiErrorResponse("Failed to connect to Facebook: " + e.getMessage()), "API_ERROR");
+            IntegrationStatusResponse response = buildApiErrorResponse("Failed to connect to Facebook: " + e.getMessage());
+            response.setApiError(new IntegrationStatusResponse.ApiError(
+                    null, null, "NetworkError", e.getMessage(), null
+            ));
+            return new PagesCheckResult(response, "API_ERROR");
         }
     }
 
@@ -326,7 +337,9 @@ public class InstagramIntegrationCheckService {
                     LocalDateTime retryAt = LocalDateTime.now().plus(7, ChronoUnit.DAYS);
                     business.setConnectionRetryAt(retryAt);
                     businessRepository.save(business);
-                    return new InstagramCheckResult(buildAdminCooldownResponse(business, retryAt), "ADMIN_COOLDOWN");
+                    IntegrationStatusResponse cooldownResponse = buildAdminCooldownResponse(business, retryAt);
+                    cooldownResponse.setApiError(parseApiErrorFromException(e));
+                    return new InstagramCheckResult(cooldownResponse, "ADMIN_COOLDOWN");
                 }
             } catch (RestClientException e) {
                 log.warn("[StatusCheck] Network error checking page_id={}: {}", pageId, e.getMessage());
