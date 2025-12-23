@@ -396,30 +396,81 @@ public class InstagramIntegrationCheckService {
         Integer code = (Integer) error.get("code");
         String message = (String) error.get("message");
         Integer subcode = error.get("error_subcode") != null ? (Integer) error.get("error_subcode") : null;
+        String type = (String) error.get("type");
+        String fbtraceId = (String) error.get("fbtrace_id");
 
-        log.warn("[StatusCheck] Facebook API error: code={}, subcode={}, message={}", code, subcode, message);
+        log.warn("[StatusCheck] Facebook API error: code={}, subcode={}, type={}, message={}", code, subcode, type, message);
+
+        // Build the API error object for the response
+        IntegrationStatusResponse.ApiError apiError = new IntegrationStatusResponse.ApiError(
+                code, subcode, type, message, fbtraceId
+        );
 
         // Error code 190: Invalid/expired token
         if (code != null && code == 190) {
-            return new PagesCheckResult(buildTokenExpiredResponse(), "TOKEN_EXPIRED");
+            IntegrationStatusResponse response = buildTokenExpiredResponse();
+            response.setApiError(apiError);
+            return new PagesCheckResult(response, "TOKEN_EXPIRED");
         }
 
         // Error code 10 or 200: Permission error
         if (code != null && (code == 10 || code == 200)) {
-            return new PagesCheckResult(buildMissingPermissionsResponse(message), "MISSING_PERMISSIONS");
+            IntegrationStatusResponse response = buildMissingPermissionsResponse(message);
+            response.setApiError(apiError);
+            return new PagesCheckResult(response, "MISSING_PERMISSIONS");
         }
 
-        return new PagesCheckResult(buildApiErrorResponse(message), "API_ERROR");
+        IntegrationStatusResponse response = buildApiErrorResponse(message);
+        response.setApiError(apiError);
+        return new PagesCheckResult(response, "API_ERROR");
     }
 
     /**
      * Handle HTTP errors from Graph API.
      */
     private PagesCheckResult handleHttpError(HttpClientErrorException e) {
+        // Try to parse error body for detailed API error
+        IntegrationStatusResponse.ApiError apiError = parseApiErrorFromException(e);
+
         if (e.getStatusCode().value() == 401) {
-            return new PagesCheckResult(buildTokenExpiredResponse(), "TOKEN_EXPIRED");
+            IntegrationStatusResponse response = buildTokenExpiredResponse();
+            response.setApiError(apiError);
+            return new PagesCheckResult(response, "TOKEN_EXPIRED");
         }
-        return new PagesCheckResult(buildApiErrorResponse("Facebook API returned " + e.getStatusCode()), "API_ERROR");
+        IntegrationStatusResponse response = buildApiErrorResponse("Facebook API returned " + e.getStatusCode());
+        response.setApiError(apiError);
+        return new PagesCheckResult(response, "API_ERROR");
+    }
+
+    /**
+     * Parse API error details from HTTP exception body.
+     */
+    private IntegrationStatusResponse.ApiError parseApiErrorFromException(HttpClientErrorException e) {
+        try {
+            String responseBody = e.getResponseBodyAsString();
+            if (responseBody != null && responseBody.contains("\"error\"")) {
+                // Simple JSON parsing for error object
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                Map<String, Object> body = mapper.readValue(responseBody, Map.class);
+                if (body.containsKey("error")) {
+                    Map<String, Object> error = (Map<String, Object>) body.get("error");
+                    Integer code = error.get("code") != null ? ((Number) error.get("code")).intValue() : null;
+                    Integer subcode = error.get("error_subcode") != null ? ((Number) error.get("error_subcode")).intValue() : null;
+                    String type = (String) error.get("type");
+                    String message = (String) error.get("message");
+                    String fbtraceId = (String) error.get("fbtrace_id");
+                    return new IntegrationStatusResponse.ApiError(code, subcode, type, message, fbtraceId);
+                }
+            }
+        } catch (Exception ex) {
+            log.debug("[StatusCheck] Failed to parse error body: {}", ex.getMessage());
+        }
+        // Fallback: create minimal error from exception
+        return new IntegrationStatusResponse.ApiError(
+                e.getStatusCode().value(), null, "HttpError",
+                e.getStatusText() != null ? e.getStatusText() : "HTTP " + e.getStatusCode().value(),
+                null
+        );
     }
 
     // Response builders - User-friendly messages only, no Meta jargon

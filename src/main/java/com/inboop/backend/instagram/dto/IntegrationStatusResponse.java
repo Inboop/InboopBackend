@@ -44,6 +44,7 @@ public class IntegrationStatusResponse {
     private Map<String, Object> details;
     private List<NextAction> nextActions;
     private Actions actions;
+    private ApiError apiError;
 
     // Constructors
     public IntegrationStatusResponse() {}
@@ -141,6 +142,76 @@ public class IntegrationStatusResponse {
 
     public void setActions(Actions actions) {
         this.actions = actions;
+    }
+
+    public ApiError getApiError() {
+        return apiError;
+    }
+
+    public void setApiError(ApiError apiError) {
+        this.apiError = apiError;
+    }
+
+    /**
+     * Raw Meta Graph API error details.
+     * Included for debugging/transparency when API calls fail.
+     */
+    public static class ApiError {
+        private Integer code;
+        private Integer subcode;
+        private String type;
+        private String message;
+        private String fbtraceId;
+
+        public ApiError() {}
+
+        public ApiError(Integer code, Integer subcode, String type, String message, String fbtraceId) {
+            this.code = code;
+            this.subcode = subcode;
+            this.type = type;
+            this.message = message;
+            this.fbtraceId = fbtraceId;
+        }
+
+        public Integer getCode() {
+            return code;
+        }
+
+        public void setCode(Integer code) {
+            this.code = code;
+        }
+
+        public Integer getSubcode() {
+            return subcode;
+        }
+
+        public void setSubcode(Integer subcode) {
+            this.subcode = subcode;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public void setMessage(String message) {
+            this.message = message;
+        }
+
+        public String getFbtraceId() {
+            return fbtraceId;
+        }
+
+        public void setFbtraceId(String fbtraceId) {
+            this.fbtraceId = fbtraceId;
+        }
     }
 
     /**
