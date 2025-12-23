@@ -376,14 +376,18 @@ public class InstagramIntegrationCheckService {
     }
 
     /**
-     * Check for Business Portfolio-owned pages via /me/businesses -> /{business-id}/owned_pages.
+     * Check for Business Portfolio pages via /me/businesses -> owned_pages + client_pages.
      * This is the fallback when /me/accounts returns empty (user is not a direct Page admin).
      *
+     * Checks both:
+     * - /{business-id}/owned_pages - Pages directly owned by the business
+     * - /{business-id}/client_pages - Pages shared with the business (client relationships)
+     *
      * Uses user access token (not page token) for business queries.
-     * For each owned page found, queries for Instagram accounts.
      */
     private PagesCheckResult checkBusinessOwnedPages(String accessToken) {
         List<Map<String, Object>> allPages = new ArrayList<>();
+        java.util.Set<String> seenPageIds = new java.util.HashSet<>(); // Dedupe pages
 
         // Step 1: Get all businesses the user has access to
         String businessesUrl = GRAPH_API_BASE + "/me/businesses?fields=id,name&access_token=" + accessToken;
@@ -404,43 +408,20 @@ public class InstagramIntegrationCheckService {
                 return new PagesCheckResult(List.of());
             }
 
-            // Step 2: For each business, get owned_pages
+            // Step 2: For each business, get both owned_pages AND client_pages
             for (Map<String, Object> business : businesses) {
                 String businessId = (String) business.get("id");
                 String businessName = (String) business.get("name");
-                log.info("[StatusCheck] Checking business_id={} ({}) for owned_pages", businessId, businessName);
+                log.info("[StatusCheck] Checking business_id={} ({}) for owned_pages and client_pages", businessId, businessName);
 
-                String ownedPagesUrl = GRAPH_API_BASE + "/" + businessId +
-                        "/owned_pages?fields=id,name,access_token&access_token=" + accessToken;
+                // Check owned_pages
+                fetchBusinessPages(businessId, "owned_pages", accessToken, allPages, seenPageIds);
 
-                try {
-                    ResponseEntity<Map> pagesResponse = restTemplate.getForEntity(ownedPagesUrl, Map.class);
-                    Map<String, Object> pagesBody = pagesResponse.getBody();
-
-                    if (pagesBody != null && pagesBody.containsKey("data")) {
-                        List<Map<String, Object>> ownedPages = (List<Map<String, Object>>) pagesBody.get("data");
-                        log.info("[StatusCheck] Business {} has {} owned pages", businessId, ownedPages.size());
-
-                        for (Map<String, Object> page : ownedPages) {
-                            String pageId = (String) page.get("id");
-                            String pageName = (String) page.get("name");
-                            boolean hasPageToken = page.containsKey("access_token");
-                            log.info("[StatusCheck] Found owned page: id={}, name={}, has_access_token={}",
-                                    pageId, pageName, hasPageToken);
-                            allPages.add(page);
-                        }
-                    }
-                } catch (HttpClientErrorException e) {
-                    log.warn("[StatusCheck] Error fetching owned_pages for business_id={}: status={}, body={}",
-                            businessId, e.getStatusCode(), e.getResponseBodyAsString());
-                    // Continue to next business
-                } catch (RestClientException e) {
-                    log.warn("[StatusCheck] Network error fetching owned_pages for business_id={}: {}",
-                            businessId, e.getMessage());
-                }
+                // Check client_pages (pages shared with this business)
+                fetchBusinessPages(businessId, "client_pages", accessToken, allPages, seenPageIds);
             }
 
-            log.info("[StatusCheck] Total pages found via /me/businesses: {}", allPages.size());
+            log.info("[StatusCheck] Total unique pages found via /me/businesses (owned + client): {}", allPages.size());
             return new PagesCheckResult(allPages);
 
         } catch (HttpClientErrorException.Unauthorized e) {
@@ -469,6 +450,57 @@ public class InstagramIntegrationCheckService {
             log.error("[StatusCheck] Network error calling /me/businesses: {}", e.getMessage());
             // Return empty list (not an error) - will try to proceed with whatever was found
             return new PagesCheckResult(List.of());
+        }
+    }
+
+    /**
+     * Fetch pages from a business endpoint (owned_pages or client_pages).
+     * Adds pages to the allPages list, deduplicating by page ID.
+     *
+     * @param businessId The business ID to query
+     * @param endpoint Either "owned_pages" or "client_pages"
+     * @param accessToken The user access token
+     * @param allPages The list to add found pages to
+     * @param seenPageIds Set of page IDs already seen (for deduplication)
+     */
+    private void fetchBusinessPages(String businessId, String endpoint, String accessToken,
+                                    List<Map<String, Object>> allPages, java.util.Set<String> seenPageIds) {
+        String url = GRAPH_API_BASE + "/" + businessId + "/" + endpoint +
+                "?fields=id,name,access_token&access_token=" + accessToken;
+
+        try {
+            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
+            Map<String, Object> body = response.getBody();
+
+            if (body != null && body.containsKey("data")) {
+                List<Map<String, Object>> pages = (List<Map<String, Object>>) body.get("data");
+                log.info("[StatusCheck] Business {} /{} returned {} pages", businessId, endpoint, pages.size());
+
+                for (Map<String, Object> page : pages) {
+                    String pageId = (String) page.get("id");
+                    String pageName = (String) page.get("name");
+                    boolean hasPageToken = page.containsKey("access_token");
+
+                    // Deduplicate - a page might appear in both owned_pages and client_pages
+                    if (!seenPageIds.contains(pageId)) {
+                        seenPageIds.add(pageId);
+                        allPages.add(page);
+                        log.info("[StatusCheck] Found {} page: id={}, name={}, has_access_token={}",
+                                endpoint, pageId, pageName, hasPageToken);
+                    } else {
+                        log.debug("[StatusCheck] Skipping duplicate page: id={} (already seen)", pageId);
+                    }
+                }
+            } else {
+                log.info("[StatusCheck] Business {} /{} returned no data", businessId, endpoint);
+            }
+        } catch (HttpClientErrorException e) {
+            // Log but don't fail - continue checking other endpoints/businesses
+            log.warn("[StatusCheck] Error fetching /{} for business_id={}: status={}, body={}",
+                    endpoint, businessId, e.getStatusCode(), e.getResponseBodyAsString());
+        } catch (RestClientException e) {
+            log.warn("[StatusCheck] Network error fetching /{} for business_id={}: {}",
+                    endpoint, businessId, e.getMessage());
         }
     }
 
