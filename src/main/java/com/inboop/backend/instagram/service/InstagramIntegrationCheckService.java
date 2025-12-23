@@ -180,24 +180,42 @@ public class InstagramIntegrationCheckService {
             return pagesResult.error;
         }
 
+        log.info("[StatusCheck] /me/accounts returned {} pages for user_id={}", pagesResult.pages.size(), user.getId());
+
+        // If /me/accounts is empty, try /me/businesses -> owned_pages (Business Portfolio pages)
+        if (pagesResult.pages.isEmpty()) {
+            log.info("[StatusCheck] No direct pages found, checking /me/businesses for Business Portfolio pages");
+            PagesCheckResult businessPagesResult = checkBusinessOwnedPages(accessToken);
+
+            if (businessPagesResult.error != null) {
+                // Log but don't fail - we'll return NO_PAGES_FOUND with combined diagnostics
+                log.warn("[StatusCheck] Error checking business-owned pages: {}", businessPagesResult.errorReason);
+            } else if (!businessPagesResult.pages.isEmpty()) {
+                log.info("[StatusCheck] Found {} Business Portfolio-owned pages", businessPagesResult.pages.size());
+                pagesResult = businessPagesResult;
+            }
+        }
+
         List<String> pageIds = pagesResult.pages.stream()
                 .map(p -> (String) p.get("id"))
                 .collect(Collectors.toList());
 
-        log.info("[StatusCheck] Pages found: user_id={}, page_count={}, page_ids={}",
+        log.info("[StatusCheck] Total pages found: user_id={}, page_count={}, page_ids={}",
                 user.getId(), pagesResult.pages.size(), pageIds);
 
+        // Only return NO_PAGES_FOUND if BOTH user-owned AND business-owned pages returned empty
         if (pagesResult.pages.isEmpty()) {
             updateBusinessWithError(business, "NO_PAGES_FOUND");
-            log.info("[StatusCheck] Result: user_id={}, status=BLOCKED, reason=NO_PAGES_FOUND", user.getId());
+            log.info("[StatusCheck] Result: user_id={}, status=BLOCKED, reason=NO_PAGES_FOUND (checked both /me/accounts and /me/businesses)", user.getId());
 
             IntegrationStatusResponse response;
             // If we have token debug info, it means permissions are likely missing
             if (pagesResult.debugInfo != null) {
                 boolean hasPagesShowList = Boolean.TRUE.equals(pagesResult.debugInfo.get("has_pages_show_list"));
                 boolean hasPagesReadEngagement = Boolean.TRUE.equals(pagesResult.debugInfo.get("has_pages_read_engagement"));
+                boolean hasBusinessManagement = Boolean.TRUE.equals(pagesResult.debugInfo.get("has_business_management"));
 
-                if (!hasPagesShowList && !hasPagesReadEngagement) {
+                if (!hasPagesShowList && !hasPagesReadEngagement && !hasBusinessManagement) {
                     // Missing required permissions - tell user to reconnect
                     response = IntegrationStatusResponse.blocked(
                             Reason.MISSING_PERMISSIONS,
@@ -209,13 +227,13 @@ public class InstagramIntegrationCheckService {
                     // Include debug info in details
                     response.setDetails(Map.of(
                             "grantedPermissions", pagesResult.debugInfo.get("permissions"),
-                            "missingPermissions", List.of("pages_show_list", "pages_read_engagement"),
+                            "missingPermissions", List.of("pages_show_list", "pages_read_engagement", "business_management"),
                             "appId", pagesResult.debugInfo.get("app_id")
                     ));
                     // Create synthetic API error for UI display
                     response.setApiError(new IntegrationStatusResponse.ApiError(
                             10, null, "OAuthException",
-                            "Token does not have required permissions: pages_show_list, pages_read_engagement. Granted: " + pagesResult.tokenPermissions,
+                            "Token does not have required permissions: pages_show_list, pages_read_engagement, business_management. Granted: " + pagesResult.tokenPermissions,
                             null
                     ));
                 } else {
@@ -224,7 +242,7 @@ public class InstagramIntegrationCheckService {
                     response.setDetails(Map.of(
                             "grantedPermissions", pagesResult.debugInfo.get("permissions"),
                             "appId", pagesResult.debugInfo.get("app_id"),
-                            "note", "Token has page permissions but /me/accounts returned empty. User may not manage any Facebook Pages."
+                            "note", "Token has page permissions but both /me/accounts and /me/businesses returned no pages with Instagram accounts."
                     ));
                 }
             } else {
@@ -324,7 +342,8 @@ public class InstagramIntegrationCheckService {
                         "app_id", permResult.appId != null ? permResult.appId : "",
                         "user_id", permResult.userId != null ? permResult.userId : "",
                         "has_pages_show_list", permResult.permissions != null && permResult.permissions.contains("pages_show_list"),
-                        "has_pages_read_engagement", permResult.permissions != null && permResult.permissions.contains("pages_read_engagement")
+                        "has_pages_read_engagement", permResult.permissions != null && permResult.permissions.contains("pages_read_engagement"),
+                        "has_business_management", permResult.permissions != null && permResult.permissions.contains("business_management")
                 );
                 return result;
             }
@@ -353,6 +372,103 @@ public class InstagramIntegrationCheckService {
                     null, null, "NetworkError", e.getMessage(), null
             ));
             return new PagesCheckResult(response, "API_ERROR");
+        }
+    }
+
+    /**
+     * Check for Business Portfolio-owned pages via /me/businesses -> /{business-id}/owned_pages.
+     * This is the fallback when /me/accounts returns empty (user is not a direct Page admin).
+     *
+     * Uses user access token (not page token) for business queries.
+     * For each owned page found, queries for Instagram accounts.
+     */
+    private PagesCheckResult checkBusinessOwnedPages(String accessToken) {
+        List<Map<String, Object>> allPages = new ArrayList<>();
+
+        // Step 1: Get all businesses the user has access to
+        String businessesUrl = GRAPH_API_BASE + "/me/businesses?fields=id,name&access_token=" + accessToken;
+
+        try {
+            ResponseEntity<Map> businessResponse = restTemplate.getForEntity(businessesUrl, Map.class);
+            Map<String, Object> businessBody = businessResponse.getBody();
+
+            if (businessBody == null || !businessBody.containsKey("data")) {
+                log.info("[StatusCheck] /me/businesses returned empty or no data");
+                return new PagesCheckResult(List.of());
+            }
+
+            List<Map<String, Object>> businesses = (List<Map<String, Object>>) businessBody.get("data");
+            log.info("[StatusCheck] Found {} businesses via /me/businesses", businesses.size());
+
+            if (businesses.isEmpty()) {
+                return new PagesCheckResult(List.of());
+            }
+
+            // Step 2: For each business, get owned_pages
+            for (Map<String, Object> business : businesses) {
+                String businessId = (String) business.get("id");
+                String businessName = (String) business.get("name");
+                log.info("[StatusCheck] Checking business_id={} ({}) for owned_pages", businessId, businessName);
+
+                String ownedPagesUrl = GRAPH_API_BASE + "/" + businessId +
+                        "/owned_pages?fields=id,name,access_token&access_token=" + accessToken;
+
+                try {
+                    ResponseEntity<Map> pagesResponse = restTemplate.getForEntity(ownedPagesUrl, Map.class);
+                    Map<String, Object> pagesBody = pagesResponse.getBody();
+
+                    if (pagesBody != null && pagesBody.containsKey("data")) {
+                        List<Map<String, Object>> ownedPages = (List<Map<String, Object>>) pagesBody.get("data");
+                        log.info("[StatusCheck] Business {} has {} owned pages", businessId, ownedPages.size());
+
+                        for (Map<String, Object> page : ownedPages) {
+                            String pageId = (String) page.get("id");
+                            String pageName = (String) page.get("name");
+                            boolean hasPageToken = page.containsKey("access_token");
+                            log.info("[StatusCheck] Found owned page: id={}, name={}, has_access_token={}",
+                                    pageId, pageName, hasPageToken);
+                            allPages.add(page);
+                        }
+                    }
+                } catch (HttpClientErrorException e) {
+                    log.warn("[StatusCheck] Error fetching owned_pages for business_id={}: status={}, body={}",
+                            businessId, e.getStatusCode(), e.getResponseBodyAsString());
+                    // Continue to next business
+                } catch (RestClientException e) {
+                    log.warn("[StatusCheck] Network error fetching owned_pages for business_id={}: {}",
+                            businessId, e.getMessage());
+                }
+            }
+
+            log.info("[StatusCheck] Total pages found via /me/businesses: {}", allPages.size());
+            return new PagesCheckResult(allPages);
+
+        } catch (HttpClientErrorException.Unauthorized e) {
+            log.warn("[StatusCheck] Token expired or invalid during /me/businesses call (401)");
+            IntegrationStatusResponse.ApiError apiError = parseApiErrorFromException(e);
+            IntegrationStatusResponse response = buildTokenExpiredResponse();
+            response.setApiError(apiError);
+            return new PagesCheckResult(response, "TOKEN_EXPIRED");
+        } catch (HttpClientErrorException e) {
+            log.warn("[StatusCheck] HTTP error from /me/businesses: status={}, body={}",
+                    e.getStatusCode(), e.getResponseBodyAsString());
+            // Check if it's a permission error (business_management scope required)
+            if (e.getStatusCode().value() == 400 || e.getStatusCode().value() == 403) {
+                String responseBody = e.getResponseBodyAsString();
+                if (responseBody.contains("permission") || responseBody.contains("business_management")) {
+                    log.info("[StatusCheck] /me/businesses requires business_management permission - not granted");
+                    // Return empty list (not an error) - will fall through to NO_PAGES_FOUND with diagnostics
+                    return new PagesCheckResult(List.of());
+                }
+            }
+            IntegrationStatusResponse.ApiError apiError = parseApiErrorFromException(e);
+            IntegrationStatusResponse response = buildApiErrorResponse("Error checking business pages: " + e.getStatusCode());
+            response.setApiError(apiError);
+            return new PagesCheckResult(response, "API_ERROR");
+        } catch (RestClientException e) {
+            log.error("[StatusCheck] Network error calling /me/businesses: {}", e.getMessage());
+            // Return empty list (not an error) - will try to proceed with whatever was found
+            return new PagesCheckResult(List.of());
         }
     }
 
