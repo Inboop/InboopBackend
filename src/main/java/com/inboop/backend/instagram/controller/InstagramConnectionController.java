@@ -233,13 +233,14 @@ public class InstagramConnectionController {
         int disconnected = 0;
 
         for (Business business : businesses) {
-            if (business.getAccessToken() != null) {
+            if (business.getAccessToken() != null || Boolean.TRUE.equals(business.getIsActive())) {
                 // Revoke the token with Facebook (best practice)
-                revokeAccessToken(business.getAccessToken());
+                if (business.getAccessToken() != null) {
+                    revokeAccessToken(business.getAccessToken());
+                }
 
-                business.setAccessToken(null);
-                business.setTokenExpiresAt(null);
-                business.setIsActive(false);
+                // Clear all Instagram/Facebook connection data for a clean reconnect
+                clearBusinessConnectionData(business);
                 businessRepository.save(business);
                 disconnected++;
             }
@@ -302,9 +303,8 @@ public class InstagramConnectionController {
             revokeAccessToken(business.getAccessToken());
         }
 
-        business.setAccessToken(null);
-        business.setTokenExpiresAt(null);
-        business.setIsActive(false);
+        // Clear all Instagram/Facebook connection data for a clean reconnect
+        clearBusinessConnectionData(business);
         businessRepository.save(business);
 
         log.info("Disconnected Instagram account {} for user ID: {}", businessId, user.getId());
@@ -314,6 +314,33 @@ public class InstagramConnectionController {
                 "disconnectedBusinessId", businessId,
                 "businessName", business.getName() != null ? business.getName() : ""
         ));
+    }
+
+    /**
+     * Clear all Instagram/Facebook connection data from a business entity.
+     * This enables a clean reconnect with a different page/account.
+     */
+    private void clearBusinessConnectionData(Business business) {
+        business.setAccessToken(null);
+        business.setTokenExpiresAt(null);
+        business.setIsActive(false);
+
+        // Clear Instagram account data
+        business.setInstagramBusinessAccountId(null);
+        business.setInstagramUsername(null);
+
+        // Clear Facebook page data
+        business.setFacebookPageId(null);
+        business.setSelectedPageId(null);
+        business.setAvailablePageIds(null);
+
+        // Clear stored IG account reference (used for ownership mismatch detection)
+        business.setLastIgAccountIdSeen(null);
+
+        // Clear any error states
+        business.setLastConnectionError(null);
+        business.setConnectionRetryAt(null);
+        business.setLastStatusCheckAt(null);
     }
 
     /**
