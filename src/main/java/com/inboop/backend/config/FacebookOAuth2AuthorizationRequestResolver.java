@@ -68,21 +68,19 @@ public class FacebookOAuth2AuthorizationRequestResolver implements OAuth2Authori
             }
         }
 
-        // Add config_id for Instagram Business Login flow
-        // The config_id defines which permissions are requested via Meta Developer Console
+        // Use standard OAuth with explicit scopes (no config_id)
+        // This matches Graph API Explorer behavior
         Map<String, Object> additionalParameters = new HashMap<>(authorizationRequest.getAdditionalParameters());
 
-        // Add config_id if configured
-        if (facebookConfigId != null && !facebookConfigId.isEmpty() && !facebookConfigId.equals("placeholder")) {
-            additionalParameters.put("config_id", facebookConfigId);
-        }
+        // DO NOT use config_id - use scopes from application.properties instead
+        // additionalParameters.put("config_id", facebookConfigId);
 
         // Add auth_type=rerequest to ensure previously declined permissions are re-prompted
         additionalParameters.put("auth_type", AUTH_TYPE_REREQUEST);
 
         // Log what we're doing for debugging
-        System.out.println("[OAuth-Debug] Building authorization request: config_id=" + facebookConfigId +
-                ", scopes=" + authorizationRequest.getScopes());
+        System.out.println("[OAuth-Debug] Building authorization request (standard OAuth, no config_id): scopes=" +
+                authorizationRequest.getScopes());
 
         return OAuth2AuthorizationRequest.from(authorizationRequest)
                 .additionalParameters(additionalParameters)
