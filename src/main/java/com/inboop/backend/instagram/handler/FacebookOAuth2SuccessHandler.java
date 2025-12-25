@@ -111,10 +111,16 @@ public class FacebookOAuth2SuccessHandler implements AuthenticationSuccessHandle
 
             String accessToken = authorizedClient.getAccessToken().getTokenValue();
             Instant expiresAt = authorizedClient.getAccessToken().getExpiresAt();
+            Instant issuedAt = authorizedClient.getAccessToken().getIssuedAt();
 
             // Get Facebook user ID from OAuth2User
             OAuth2User oAuth2User = oauthToken.getPrincipal();
             String facebookUserId = oAuth2User.getAttribute("id");
+
+            // INSTRUMENTATION: Log token details for debugging
+            String tokenHash = accessToken.length() > 6 ? accessToken.substring(accessToken.length() - 6) : accessToken;
+            log.info("[OAuth-Token] FRESH TOKEN RECEIVED: user_id={}, fb_user_id={}, token_hash=...{}, issued_at={}, expires_at={}",
+                    userId, facebookUserId, tokenHash, issuedAt, expiresAt);
 
             log.info("Facebook OAuth successful for user ID: {}, Facebook user ID: {}", userId, facebookUserId);
 
