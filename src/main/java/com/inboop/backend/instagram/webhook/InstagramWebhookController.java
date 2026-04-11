@@ -63,7 +63,29 @@ public class InstagramWebhookController {
      */
     @PostMapping
     public ResponseEntity<ApiResponse<String>> receiveWebhook(@RequestBody WebhookPayload payload) {
-        logger.info("Received webhook payload: object={}", payload.getObject());
+        // Log full details for debugging
+        if (payload.getEntry() != null && !payload.getEntry().isEmpty()) {
+            WebhookPayload.Entry entry = payload.getEntry().get(0);
+            String entryId = entry.getId();
+
+            if (entry.getMessaging() != null && !entry.getMessaging().isEmpty()) {
+                WebhookPayload.Messaging messaging = entry.getMessaging().get(0);
+                String senderId = messaging.getSender() != null ? messaging.getSender().getId() : "null";
+                String recipientId = messaging.getRecipient() != null ? messaging.getRecipient().getId() : "null";
+                String messageText = messaging.getMessage() != null ? messaging.getMessage().getText() : "[no text]";
+
+                logger.info("=== WEBHOOK RECEIVED ===");
+                logger.info("Entry ID (Business): {}", entryId);
+                logger.info("Sender ID: {}", senderId);
+                logger.info("Recipient ID: {}", recipientId);
+                logger.info("Message: {}", messageText);
+                logger.info("========================");
+            } else {
+                logger.info("Received webhook: object={}, entryId={}, no messaging data", payload.getObject(), entryId);
+            }
+        } else {
+            logger.info("Received webhook payload: object={}, no entries", payload.getObject());
+        }
 
         // Log the webhook for debugging
         WebhookLog log = createWebhookLog(payload);

@@ -17,10 +17,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestTemplate;
+
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -105,18 +109,21 @@ public class InstagramWebhookService {
         }
 
         // Determine if message is from customer or from business
-        // If sender ID equals the page ID, it's an outgoing message from the business
+        // If sender ID equals the page ID (entry.id), it's an outgoing message from the business
         boolean isFromCustomer = !senderId.equals(pageId);
         String customerId = isFromCustomer ? senderId : recipientId;
-        String businessPageId = isFromCustomer ? recipientId : senderId;
 
-        // Find the business by Facebook Page ID
-        // The sender/recipient ID in webhook is the Instagram Business Account ID or Facebook Page ID
-        Optional<Business> businessOpt = businessRepository.findByFacebookPageId(businessPageId)
-                .or(() -> businessRepository.findByInstagramBusinessAccountId(businessPageId));
+        // The pageId (entry.id) is always the business account that received the webhook
+        // Try to find business by: entry.id, or recipient.id as fallback
+        Optional<Business> businessOpt = businessRepository.findByInstagramBusinessAccountId(pageId)
+                .or(() -> businessRepository.findByFacebookPageId(pageId))
+                .or(() -> businessRepository.findByInstagramBusinessAccountId(recipientId))
+                .or(() -> businessRepository.findByFacebookPageId(recipientId));
 
         if (businessOpt.isEmpty()) {
-            logger.warn("No business found for Instagram Page ID: {}", businessPageId);
+            String messageText = messageData.getText() != null ? messageData.getText() : "[no text]";
+            logger.warn("No business found for Page ID: {} or Recipient ID: {}. Message from sender {}: \"{}\"",
+                    pageId, recipientId, senderId, messageText);
             return;
         }
 
@@ -148,11 +155,53 @@ public class InstagramWebhookService {
                     newConversation.setBusiness(business);
                     newConversation.setInstagramScopedUserId(customerId);
                     newConversation.setChannel(ChannelType.INSTAGRAM);
-                    newConversation.setCustomerHandle(customerId); // Will be updated with username later via API
+                    newConversation.setCustomerHandle(customerId);
                     newConversation.setUnreadCount(0);
                     newConversation.setIsActive(true);
+
+                    // Fetch customer profile info from Instagram API
+                    fetchAndSetCustomerProfile(newConversation, customerId, business.getAccessToken());
+
                     return conversationRepository.save(newConversation);
                 });
+    }
+
+    /**
+     * Fetch customer profile info (username, name, profile pic) from Instagram Graph API.
+     * This only works for users who have messaged the business within the messaging window.
+     */
+    private void fetchAndSetCustomerProfile(Conversation conversation, String customerId, String accessToken) {
+        if (accessToken == null || accessToken.isEmpty()) {
+            logger.warn("No access token available to fetch customer profile for {}", customerId);
+            return;
+        }
+
+        try {
+            RestTemplate restTemplate = new RestTemplate();
+            String url = String.format(
+                    "https://graph.facebook.com/v21.0/%s?fields=username,name,profile_pic&access_token=%s",
+                    customerId, accessToken);
+
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, null, Map.class);
+            Map<String, Object> data = response.getBody();
+
+            if (data != null) {
+                if (data.containsKey("username")) {
+                    conversation.setCustomerHandle((String) data.get("username"));
+                }
+                if (data.containsKey("name")) {
+                    conversation.setCustomerName((String) data.get("name"));
+                }
+                if (data.containsKey("profile_pic")) {
+                    conversation.setProfilePicture((String) data.get("profile_pic"));
+                }
+                logger.info("Fetched profile for customer {}: username={}, name={}",
+                        customerId, data.get("username"), data.get("name"));
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to fetch customer profile for {}: {}", customerId, e.getMessage());
+            // Don't fail the conversation creation - profile info is optional
+        }
     }
 
     private Message createMessage(Conversation conversation, WebhookPayload.Messaging messaging, boolean isFromCustomer) {
@@ -230,10 +279,16 @@ public class InstagramWebhookService {
             lead.setType(LeadType.OTHER); // Will be classified by AI later
             lead.setLastMessageSnippet(message.getOriginalText());
             lead.setLastMessageAt(message.getSentAt());
+
+            // Copy profile info from conversation
+            lead.setInstagramUsername(conversation.getCustomerHandle());
+            lead.setCustomerName(conversation.getCustomerName());
+            lead.setProfilePicture(conversation.getProfilePicture());
+
             leadRepository.save(lead);
 
-            logger.info("Created new lead for customer {} in business {}",
-                    customerId, business.getInstagramUsername());
+            logger.info("Created new lead for customer {} (@{}) in business {}",
+                    customerId, conversation.getCustomerHandle(), business.getInstagramUsername());
         }
     }
 }
